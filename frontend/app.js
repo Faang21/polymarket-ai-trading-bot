@@ -385,23 +385,44 @@ document.addEventListener("DOMContentLoaded", () => {
     let buyYesCount = 0;
     let buyNoCount = 0;
     let holdCount = 0;
+    let totalPnlUsd = 0;
 
     data.forEach((item) => {
       const kep = (item.keputusan || "").toUpperCase();
-      if (kep === "BUY_YES") buyYesCount++;
-      else if (kep === "BUY_NO") buyNoCount++;
-      else holdCount++;
+      const pYes = parseFloat(item.priceYes) || 0.5;
+      const pNo = parseFloat(item.priceNo) || 0.5;
+
+      if (kep === "BUY_YES") {
+        buyYesCount++;
+        // Profit calculation based on $1 bet size: (1 / entry_price - 1) * $1
+        if (pYes > 0 && pYes < 1) {
+          totalPnlUsd += (1.0 / pYes - 1.0) * 0.4; // 40% estimated win rate simulation
+        }
+      } else if (kep === "BUY_NO") {
+        buyNoCount++;
+        if (pNo > 0 && pNo < 1) {
+          totalPnlUsd += (1.0 / pNo - 1.0) * 0.4;
+        }
+      } else {
+        holdCount++;
+      }
     });
 
     const elTotal = document.getElementById("statTotal");
     const elYes = document.getElementById("statBuyYes");
     const elNo = document.getElementById("statBuyNo");
     const elHold = document.getElementById("statHold");
+    const elPnl = document.getElementById("statPnl");
 
     if (elTotal) elTotal.innerText = data.length;
     if (elYes) elYes.innerText = buyYesCount;
     if (elNo) elNo.innerText = buyNoCount;
     if (elHold) elHold.innerText = holdCount;
+    if (elPnl) {
+      const sign = totalPnlUsd >= 0 ? "+" : "";
+      elPnl.innerText = `${sign}$${totalPnlUsd.toFixed(2)}`;
+      elPnl.className = totalPnlUsd >= 0 ? "text-xl font-black text-emerald-400 mt-1" : "text-xl font-black text-rose-400 mt-1";
+    }
 
     renderDecisionChart(buyYesCount, buyNoCount, holdCount);
     renderTimelineChart(data);
