@@ -20,7 +20,8 @@ CLOUDFLARE_KV_URL = os.environ.get("CLOUDFLARE_KV_URL", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PRIVATE_KEY_BURNER = os.environ.get("PRIVATE_KEY_BURNER", "")
 CSV_FILENAME = "catatan_simulasi_polymarket.csv"
-POLYMARKET_GAMMA_URL = "https://gamma-api.polymarket.com/events?closed=false&limit=10"
+POLYMARKET_BTC_URL = "https://gamma-api.polymarket.com/events?closed=false&q=bitcoin&limit=15"
+POLYMARKET_FALLBACK_URL = "https://gamma-api.polymarket.com/events?closed=false&limit=15"
 
 
 def step_1_check_emergency_switch():
@@ -45,20 +46,27 @@ def step_1_check_emergency_switch():
         print(f"[WARNING] Error contacting Cloudflare KV switch: {e}. Continuing run...")
 
 
-def step_2_fetch_polymarket_data():
-    """Step 2: Fetch 10 active Polymarket events using exponential backoff retries."""
-    print("\n--- [STEP 2] Fetching Active Market Data from Polymarket Gamma API ---")
+def step_2_fetch_polymarket_btc_data():
+    """Step 2: Fetch active Bitcoin (BTC) Polymarket events using exponential backoff retries."""
+    print("\n--- [STEP 2] Fetching Active BITCOIN Prediction Markets from Polymarket ---")
     max_retries = 5
     base_delay = 2
 
+    # First try fetching specific Bitcoin events
     for attempt in range(1, max_retries + 1):
         try:
-            print(f"[FETCH] Attempt {attempt}/{max_retries} requesting {POLYMARKET_GAMMA_URL}...")
-            res = requests.get(POLYMARKET_GAMMA_URL, timeout=15)
+            print(f"[FETCH BTC] Attempt {attempt}/{max_retries} requesting Bitcoin markets...")
+            res = requests.get(POLYMARKET_BTC_URL, timeout=15)
             if res.status_code == 200:
                 events = res.json()
-                print(f"[SUCCESS] Successfully fetched {len(events)} active events from Polymarket.")
-                return events
+                btc_events = [e for e in events if any(k in (e.get('title','') + ' ' + e.get('description','')).lower() for k in ['bitcoin', 'btc', 'price', 'crypto'])]
+                if btc_events:
+                    print(f"[SUCCESS] Successfully fetched {len(btc_events)} active Bitcoin events from Polymarket.")
+                    return btc_events
+                else:
+                    print(f"[INFO] Search query returned {len(events)} events, filtering for BTC...")
+                    if events:
+                        return events
             else:
                 print(f"[WARNING] Received status code {res.status_code} from Polymarket API.")
         except Exception as e:
@@ -66,38 +74,47 @@ def step_2_fetch_polymarket_data():
 
         if attempt < max_retries:
             sleep_time = base_delay ** attempt
-            print(f"[RETRY] Waiting {sleep_time}s before next attempt (Exponential Backoff)...")
+            print(f"[RETRY] Waiting {sleep_time}s before next attempt...")
             time.sleep(sleep_time)
 
-    print("[ERROR] Failed to fetch market data after 5 retries.")
+    # Fallback to general active markets if specific query fails
+    print("[FALLBACK] Fetching general top active markets...")
+    try:
+        res = requests.get(POLYMARKET_FALLBACK_URL, timeout=15)
+        if res.status_code == 200:
+            return res.json()
+    except Exception:
+        pass
+
+    print("[ERROR] Failed to fetch market data after retries.")
     return []
 
 
-def step_3_analyze_with_gemini(market_info, gemini_client):
-    """Step 3: Analyze market using Gemini 3.6 Flash Engine asking for structured JSON decision."""
+def step_3_analyze_btc_with_gemini(market_info, gemini_client):
+    """Step 3: Analyze Bitcoin market using Gemini 3.6 Flash Engine asking for structured JSON decision."""
     if not gemini_client:
         return {"keputusan": "HOLD", "alasan": "Gemini API Client tidak tersedia (Mock mode)."}
 
     prompt = f"""
-Kamu adalah AI Trading Bot Senior spesialis pasar prediksi Polymarket.
-Analisis data pasar prediksi berikut dan berikan keputusan trading terbaik:
+Kamu adalah AI Trading Bot Expert spesialis Pasar Prediksi BITCOIN (BTC) & Kripto di Polymarket.
+Tugasmu: Analisis data harga pasar 5-menitan berikut dan tentukan posisi trading terbaik.
 
-Detail Pasar:
-- Judul Event: {market_info.get('title')}
-- Pertanyaan Pasar: {market_info.get('question')}
-- Harga Outcome YES: {market_info.get('price_yes')}
-- Harga Outcome NO: {market_info.get('price_no')}
-- Volume: {market_info.get('volume')}
+Detail Pasar Bitcoin Polymarket:
+- Judul Pasar: {market_info.get('title')}
+- Pertanyaan Prediksi: {market_info.get('question')}
+- Harga Option YES: ${market_info.get('price_yes')}
+- Harga Option NO: ${market_info.get('price_no')}
+- Volume Perdagangan: ${market_info.get('volume')}
 
-Aturan Keputusan:
-1. "BUY_YES": Jika kamu yakin outcome YES memiliki probabilitas keberhasilan jauh lebih tinggi daripada harganya sekarang.
-2. "BUY_NO": Jika kamu yakin outcome NO memiliki nilai value jauh lebih tinggi.
-3. "HOLD": Jika pasar terlalu berisiko, informasi tidak cukup, atau harga sudah wajar.
+Aturan Keputusan Trading Bitcoin:
+1. "BUY_YES": Jika kamu yakin harga/prediksi YES sangat undervalued dibanding pergerakan momentum Bitcoin saat ini.
+2. "BUY_NO": Jika kamu yakin tren Bitcoin membuat opsi NO jauh lebih berpeluang menang.
+3. "HOLD": Jika risiko terlalu tinggi,spread terlalu tipis, atau sinyal Bitcoin belum konfirmatif.
 
-Berikan jawaban STRICT JSON tanpa teks tambahan di luar JSON:
+Kembalikan jawaban DALAM FORMAT STRICT JSON TANPA TEKS LAIN:
 {{
   "keputusan": "BUY_YES" | "BUY_NO" | "HOLD",
-  "alasan": "Penjelasan singkat maksimal 2 kalimat"
+  "alasan": "Penjelasan analisis teknikal/probabilitas singkat maksimal 2 kalimat"
 }}
 """
 
@@ -119,13 +136,12 @@ Berikan jawaban STRICT JSON tanpa teks tambahan di luar JSON:
         return decision_data
     except Exception as e:
         print(f"   [GEMINI ERROR] Exception during API call: {e}")
-        # Fallback response
         return {"keputusan": "HOLD", "alasan": f"Error analisis Gemini: {str(e)}"}
 
 
 def step_4_record_simulation(records):
     """Step 4: Save transaction & simulation records into CSV."""
-    print(f"\n--- [STEP 4] Logging {len(records)} Simulation Results to {CSV_FILENAME} ---")
+    print(f"\n--- [STEP 4] Logging {len(records)} Bitcoin Simulation Results to {CSV_FILENAME} ---")
     file_exists = os.path.exists(CSV_FILENAME)
 
     fieldnames = [
@@ -148,14 +164,14 @@ def step_4_record_simulation(records):
                 writer.writeheader()
             for rec in records:
                 writer.writerow(rec)
-        print(f"[SUCCESS] CSV update complete. File '{CSV_FILENAME}' is ready.")
+        print(f"[SUCCESS] CSV update complete. File '{CSV_FILENAME}' updated successfully.")
     except Exception as e:
         print(f"[ERROR] Failed writing to CSV: {e}")
 
 
 def main():
     print("==================================================================")
-    print("🚀 Polymarket AI Trading Bot (Gemini 3.6 Flash Engine) Initialized")
+    print("🚀 Polymarket BITCOIN 5-Min AI Trading Bot (Gemini 3.6 Flash)")
     print(f"⏰ Execution Timestamp: {datetime.now(timezone.utc).isoformat()}")
     print("==================================================================")
 
@@ -171,19 +187,19 @@ def main():
         except Exception as err:
             print(f"[WARNING] Could not initialize Google GenAI Client: {err}")
     else:
-        print("[INFO] GEMINI_API_KEY is not set or SDK missing. Running in simulation fallback mode.")
+        print("[INFO] GEMINI_API_KEY is not set. Running in simulation fallback mode.")
 
-    # 2. Fetch Data from Polymarket Gamma API
-    events = step_2_fetch_polymarket_data()
+    # 2. Fetch Bitcoin Data from Polymarket Gamma API
+    events = step_2_fetch_polymarket_btc_data()
     if not events:
-        print("[INFO] No active events found or API down. Exiting cycle.")
+        print("[INFO] No active Bitcoin events found or API down. Exiting cycle.")
         sys.exit(0)
 
-    print("\n--- [STEP 3] Analyzing Markets with Gemini AI Engine ---")
+    print(f"\n--- [STEP 3] Analyzing {len(events)} Bitcoin Markets with Gemini AI Engine ---")
     simulation_records = []
 
     for idx, event in enumerate(events, 1):
-        event_title = event.get("title", "Unknown Event")
+        event_title = event.get("title", "Bitcoin Market Event")
         markets = event.get("markets", [])
 
         if not markets:
@@ -223,15 +239,15 @@ def main():
             "volume": volume
         }
 
-        print(f"\n[{idx}/{len(events)}] Analyzing Market: '{market_question[:60]}...'")
+        print(f"\n[{idx}/{len(events)}] Analyzing BTC Market: '{market_question[:65]}...'")
         print(f"    Prices -> YES: ${price_yes} | NO: ${price_no} | Volume: ${volume}")
 
         # Send to Gemini
-        ai_result = step_3_analyze_with_gemini(market_info, gemini_client)
+        ai_result = step_3_analyze_btc_with_gemini(market_info, gemini_client)
         keputusan = ai_result.get("keputusan", "HOLD")
         alasan = ai_result.get("alasan", "No reason provided.")
 
-        print(f"    🤖 AI Decision: {keputusan} | Reason: {alasan}")
+        print(f"    🤖 Bitcoin AI Decision: {keputusan} | Reason: {alasan}")
 
         simulation_records.append({
             "Timestamp": datetime.now(timezone.utc).isoformat(),
@@ -253,7 +269,7 @@ def main():
     if simulation_records:
         step_4_record_simulation(simulation_records)
 
-    print("\n✅ [CYCLE COMPLETE] Bot cycle finished successfully.")
+    print("\n✅ [BITCOIN CYCLE COMPLETE] 5-minute Bitcoin analysis cycle finished successfully.")
 
 
 if __name__ == "__main__":
