@@ -47,12 +47,10 @@ document.addEventListener("DOMContentLoaded", () => {
   let equityChartInstance = null;
 
   // Load saved wallet address or set default burner address
-  const DEFAULT_WALLET = "0x06133b641e505538421c74c5355e19cb497f572"; // User burner address reference
-  const savedWallet = localStorage.getItem("POLYMARKET_WALLET_ADDRESS") || "";
-  if (savedWallet) {
-    walletAddressInput.value = savedWallet;
-    fetchPolygonWalletBalances(savedWallet);
-  }
+  const DEFAULT_WALLET = "0xa959f26847211f71A22aDb087EBe50E0743e7D66";
+  const savedWallet = localStorage.getItem("POLYMARKET_WALLET_ADDRESS") || DEFAULT_WALLET;
+  walletAddressInput.value = savedWallet;
+  fetchPolygonWalletBalances(savedWallet);
 
   saveWalletBtn.addEventListener("click", () => {
     const addr = walletAddressInput.value.trim();
@@ -92,39 +90,54 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
-      // 2. Fetch USDC Token Balance (Polygon Native USDC: 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359)
+      // 2. Fetch Native USDC (0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359) & Bridged USDC.e (0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174)
       const cleanAddr = address.substring(2).padStart(64, "0");
-      const rpcBodyUsdc = JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_call",
-        params: [
-          {
-            to: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
-            data: "0x70a08231" + cleanAddr,
-          },
-          "latest",
-        ],
-        id: 2,
-      });
+      let totalUsdcVal = 0;
 
-      const resUsdc = await fetch("https://polygon-rpc.com", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: rpcBodyUsdc,
-      });
-
-      if (resUsdc.ok) {
-        const dataUsdc = await resUsdc.json();
-        if (dataUsdc.result && dataUsdc.result !== "0x") {
-          const usdcRaw = BigInt(dataUsdc.result);
-          const usdcVal = (Number(usdcRaw) / 1e6).toFixed(2);
-          usdcBalanceText.innerText = `$${usdcVal}`;
-          renderEquityChart(usdcVal);
-        } else {
-          usdcBalanceText.innerText = "$0.00";
-          renderEquityChart("0.00");
+      // Native USDC
+      try {
+        const resUsdcNative = await fetch("https://polygon-rpc.com", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "eth_call",
+            params: [{ to: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", data: "0x70a08231" + cleanAddr }, "latest"],
+            id: 2
+          })
+        });
+        if (resUsdcNative.ok) {
+          const dataUsdc = await resUsdcNative.json();
+          if (dataUsdc.result && dataUsdc.result !== "0x") {
+            totalUsdcVal += Number(BigInt(dataUsdc.result)) / 1e6;
+          }
         }
-      }
+      } catch(e) {}
+
+      // Bridged USDC.e
+      try {
+        const resUsdcBridged = await fetch("https://polygon-rpc.com", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "eth_call",
+            params: [{ to: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", data: "0x70a08231" + cleanAddr }, "latest"],
+            id: 3
+          })
+        });
+        if (resUsdcBridged.ok) {
+          const dataUsdcE = await resUsdcBridged.json();
+          if (dataUsdcE.result && dataUsdcE.result !== "0x") {
+            totalUsdcVal += Number(BigInt(dataUsdcE.result)) / 1e6;
+          }
+        }
+      } catch(e) {}
+
+      const formattedUsdc = totalUsdcVal.toFixed(2);
+      usdcBalanceText.innerText = `$${formattedUsdc}`;
+      renderEquityChart(formattedUsdc);
+
     } catch (err) {
       console.log("Error fetching Polygon RPC balances:", err);
       usdcBalanceText.innerText = "$0.00";
