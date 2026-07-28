@@ -173,72 +173,79 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Web3 Polygon RPC Balances
+  // Web3 Polygon RPC Balances with Multi-RPC Fallback
+  const POLYGON_RPC_ENDPOINTS = [
+    "https://polygon-bor-rpc.publicnode.com",
+    "https://1rpc.io/matic",
+    "https://rpc.ankr.com/polygon",
+    "https://polygon.llamarpc.com"
+  ];
+
+  async function callPolygonRpc(bodyObj) {
+    for (const rpcUrl of POLYGON_RPC_ENDPOINTS) {
+      try {
+        const res = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(bodyObj),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.result) return data.result;
+        }
+      } catch (e) {
+        // Try next RPC endpoint silently
+      }
+    }
+    return null;
+  }
+
   async function fetchPolygonWalletBalances(address) {
     if (usdcBalanceText) usdcBalanceText.innerText = "Loading...";
     if (polBalanceText) polBalanceText.innerText = "Loading...";
 
     try {
-      const resPol = await fetch("https://polygon-rpc.com", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "eth_getBalance",
-          params: [address, "latest"],
-          id: 1,
-        }),
+      // 1. Fetch POL (MATIC) native balance
+      const hexBalance = await callPolygonRpc({
+        jsonrpc: "2.0",
+        method: "eth_getBalance",
+        params: [address, "latest"],
+        id: 1,
       });
 
-      if (resPol.ok) {
-        const dataPol = await resPol.json();
-        if (dataPol.result) {
-          const polWei = BigInt(dataPol.result);
-          const polAmount = (Number(polWei) / 1e18).toFixed(3);
-          if (polBalanceText) polBalanceText.innerText = `${polAmount} POL`;
-        }
+      if (hexBalance) {
+        const polWei = BigInt(hexBalance);
+        const polAmount = (Number(polWei) / 1e18).toFixed(3);
+        if (polBalanceText) polBalanceText.innerText = `${polAmount} POL`;
+      } else {
+        if (polBalanceText) polBalanceText.innerText = "0.00 POL";
       }
 
+      // 2. Fetch Native USDC (0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359) & Bridged USDC.e (0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174)
       const cleanAddr = address.substring(2).padStart(64, "0");
       let totalUsdcVal = 0;
 
-      try {
-        const resUsdcNative = await fetch("https://polygon-rpc.com", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            method: "eth_call",
-            params: [{ to: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", data: "0x70a08231" + cleanAddr }, "latest"],
-            id: 2
-          })
-        });
-        if (resUsdcNative.ok) {
-          const dataUsdc = await resUsdcNative.json();
-          if (dataUsdc.result && dataUsdc.result !== "0x") {
-            totalUsdcVal += Number(BigInt(dataUsdc.result)) / 1e6;
-          }
-        }
-      } catch(e) {}
+      // Native USDC
+      const hexUsdcNative = await callPolygonRpc({
+        jsonrpc: "2.0",
+        method: "eth_call",
+        params: [{ to: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", data: "0x70a08231" + cleanAddr }, "latest"],
+        id: 2
+      });
+      if (hexUsdcNative && hexUsdcNative !== "0x") {
+        totalUsdcVal += Number(BigInt(hexUsdcNative)) / 1e6;
+      }
 
-      try {
-        const resUsdcBridged = await fetch("https://polygon-rpc.com", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            method: "eth_call",
-            params: [{ to: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", data: "0x70a08231" + cleanAddr }, "latest"],
-            id: 3
-          })
-        });
-        if (resUsdcBridged.ok) {
-          const dataUsdcE = await resUsdcBridged.json();
-          if (dataUsdcE.result && dataUsdcE.result !== "0x") {
-            totalUsdcVal += Number(BigInt(dataUsdcE.result)) / 1e6;
-          }
-        }
-      } catch(e) {}
+      // Bridged USDC.e
+      const hexUsdcBridged = await callPolygonRpc({
+        jsonrpc: "2.0",
+        method: "eth_call",
+        params: [{ to: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", data: "0x70a08231" + cleanAddr }, "latest"],
+        id: 3
+      });
+      if (hexUsdcBridged && hexUsdcBridged !== "0x") {
+        totalUsdcVal += Number(BigInt(hexUsdcBridged)) / 1e6;
+      }
 
       const formattedUsdc = totalUsdcVal.toFixed(2);
       if (usdcBalanceText) usdcBalanceText.innerText = `$${formattedUsdc}`;
