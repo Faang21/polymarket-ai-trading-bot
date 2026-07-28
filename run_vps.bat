@@ -24,7 +24,7 @@ if %errorlevel% equ 0 (
     set PY_CMD=py
   ) else (
     echo.
-    echo ❌ Python belum terdeteksi di window ini. Buka jendela CMD BARU!
+    echo ❌ Python belum terdeteksi. Buka jendela CMD BARU!
     pause
     exit /b 1
   )
@@ -32,8 +32,8 @@ if %errorlevel% equ 0 (
 
 echo Python Detected: %PY_CMD%
 echo.
-echo 1. Installing Python dependencies...
-%PY_CMD% -m pip install -r backend/requirements.txt
+echo 1. Installing Python dependencies (SSL Trusted Host Bypass)...
+%PY_CMD% -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org -r backend/requirements.txt
 echo.
 echo 2. Launching 24/7 Bitcoin Trading Bot Loop...
 %PY_CMD% backend/run_vps_247.py
