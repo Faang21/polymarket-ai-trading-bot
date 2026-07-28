@@ -4,7 +4,11 @@ import time
 import json
 import csv
 import requests
+import urllib3
 from datetime import datetime, timezone
+
+# Disable SSL warnings for environments with system clock skew
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Try importing Google GenAI SDK (google-genai)
 try:
@@ -32,7 +36,7 @@ def step_1_check_emergency_switch():
         return
 
     try:
-        response = requests.get(CLOUDFLARE_KV_URL, timeout=10)
+        response = requests.get(CLOUDFLARE_KV_URL, timeout=10, verify=False)
         if response.status_code == 200:
             data = response.json()
             status = str(data.get("status") or data.get("bot_status") or "RUNNING").upper()
@@ -52,11 +56,10 @@ def step_2_fetch_polymarket_btc_data():
     max_retries = 5
     base_delay = 2
 
-    # First try fetching specific Bitcoin events
     for attempt in range(1, max_retries + 1):
         try:
             print(f"[FETCH BTC] Attempt {attempt}/{max_retries} requesting Bitcoin markets...")
-            res = requests.get(POLYMARKET_BTC_URL, timeout=15)
+            res = requests.get(POLYMARKET_BTC_URL, timeout=15, verify=False)
             if res.status_code == 200:
                 events = res.json()
                 btc_events = [e for e in events if any(k in (e.get('title','') + ' ' + e.get('description','')).lower() for k in ['bitcoin', 'btc', 'price', 'crypto'])]
@@ -80,7 +83,7 @@ def step_2_fetch_polymarket_btc_data():
     # Fallback to general active markets if specific query fails
     print("[FALLBACK] Fetching general top active markets...")
     try:
-        res = requests.get(POLYMARKET_FALLBACK_URL, timeout=15)
+        res = requests.get(POLYMARKET_FALLBACK_URL, timeout=15, verify=False)
         if res.status_code == 200:
             return res.json()
     except Exception:
@@ -109,7 +112,7 @@ Detail Pasar Bitcoin Polymarket:
 Aturan Keputusan Trading Bitcoin:
 1. "BUY_YES": Jika kamu yakin harga/prediksi YES sangat undervalued dibanding pergerakan momentum Bitcoin saat ini.
 2. "BUY_NO": Jika kamu yakin tren Bitcoin membuat opsi NO jauh lebih berpeluang menang.
-3. "HOLD": Jika risiko terlalu tinggi,spread terlalu tipis, atau sinyal Bitcoin belum konfirmatif.
+3. "HOLD": Jika risiko terlalu tinggi, spread terlalu tipis, atau sinyal Bitcoin belum konfirmatif.
 
 Kembalikan jawaban DALAM FORMAT STRICT JSON TANPA TEKS LAIN:
 {{
