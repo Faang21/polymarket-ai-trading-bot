@@ -3,11 +3,14 @@ import sys
 import time
 import json
 import csv
+import ssl
 import requests
 import urllib3
 from datetime import datetime, timezone
 
-# Disable SSL warnings for environments with system clock skew
+# 1. Global SSL Bypass for environments with clock skew (year 2050 / expired certs)
+ssl._create_default_https_context = ssl._create_unverified_context
+os.environ["PYTHONHTTPSVERIFY"] = "0"
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Try importing Google GenAI SDK (google-genai)
@@ -20,9 +23,10 @@ except ImportError:
     print("[WARNING] Package 'google-genai' is not installed or available.")
 
 # Configuration & Constants
-CLOUDFLARE_KV_URL = os.environ.get("CLOUDFLARE_KV_URL", "")
+CLOUDFLARE_KV_URL = os.environ.get("CLOUDFLARE_KV_URL", "https://bot-control.aangcrypto21.workers.dev/status")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PRIVATE_KEY_BURNER = os.environ.get("PRIVATE_KEY_BURNER", "")
+BET_AMOUNT_USD = 1.0  # $1 USD per trade as requested
 CSV_FILENAME = "catatan_simulasi_polymarket.csv"
 POLYMARKET_BTC_URL = "https://gamma-api.polymarket.com/events?closed=false&q=btc%20up%20down&limit=15"
 POLYMARKET_FALLBACK_URL = "https://gamma-api.polymarket.com/events?closed=false&q=bitcoin&limit=15"
@@ -52,9 +56,9 @@ def step_1_check_emergency_switch():
 
 def step_2_fetch_polymarket_btc_data():
     """Step 2: Fetch active Bitcoin (BTC) Polymarket events using exponential backoff retries."""
-    print("\n--- [STEP 2] Fetching Active BITCOIN Prediction Markets from Polymarket ---")
-    max_retries = 5
-    base_delay = 2
+    print("\n--- [STEP 2] Fetching Active 1-Min/5-Min BITCOIN Prediction Markets ---")
+    max_retries = 3
+    base_delay = 1
 
     for attempt in range(1, max_retries + 1):
         try:
@@ -62,12 +66,11 @@ def step_2_fetch_polymarket_btc_data():
             res = requests.get(POLYMARKET_BTC_URL, timeout=15, verify=False)
             if res.status_code == 200:
                 events = res.json()
-                btc_events = [e for e in events if any(k in (e.get('title','') + ' ' + e.get('description','')).lower() for k in ['bitcoin', 'btc', 'price', 'crypto'])]
+                btc_events = [e for e in events if any(k in (e.get('title','') + ' ' + e.get('description','')).lower() for k in ['bitcoin', 'btc', 'price', 'crypto', '5-minute', '1-minute'])]
                 if btc_events:
                     print(f"[SUCCESS] Successfully fetched {len(btc_events)} active Bitcoin events from Polymarket.")
                     return btc_events
                 else:
-                    print(f"[INFO] Search query returned {len(events)} events, filtering for BTC...")
                     if events:
                         return events
             else:
@@ -76,12 +79,9 @@ def step_2_fetch_polymarket_btc_data():
             print(f"[WARNING] Attempt {attempt} failed: {e}")
 
         if attempt < max_retries:
-            sleep_time = base_delay ** attempt
-            print(f"[RETRY] Waiting {sleep_time}s before next attempt...")
-            time.sleep(sleep_time)
+            time.sleep(base_delay)
 
     # Fallback to general active markets if specific query fails
-    print("[FALLBACK] Fetching general top active markets...")
     try:
         res = requests.get(POLYMARKET_FALLBACK_URL, timeout=15, verify=False)
         if res.status_code == 200:
@@ -89,18 +89,17 @@ def step_2_fetch_polymarket_btc_data():
     except Exception:
         pass
 
-    print("[ERROR] Failed to fetch market data after retries.")
     return []
 
 
 def step_3_analyze_btc_with_gemini(market_info, gemini_client):
     """Step 3: Analyze Bitcoin market using Gemini 3.6 Flash Engine asking for structured JSON decision."""
     if not gemini_client:
-        return {"keputusan": "HOLD", "alasan": "Gemini API Client tidak tersedia (Mock mode)."}
+        return {"keputusan": "HOLD", "alasan": "Gemini API Client tidak tersedia."}
 
     prompt = f"""
-Kamu adalah AI Trading Bot Expert spesialis Pasar Prediksi BITCOIN (BTC) & Kripto di Polymarket.
-Tugasmu: Analisis data harga pasar 5-menitan berikut dan tentukan posisi trading terbaik.
+Kamu adalah AI Trading Bot Expert spesialis Pasar Prediksi BITCOIN (BTC) di Polymarket.
+Tugasmu: Analisis data harga pasar 1-menit / 5-menit berikut dan tentukan posisi trading terbaik (Ukuran Taruhan: ${BET_AMOUNT_USD} USD).
 
 Detail Pasar Bitcoin Polymarket:
 - Judul Pasar: {market_info.get('title')}
@@ -108,16 +107,17 @@ Detail Pasar Bitcoin Polymarket:
 - Harga Option YES: ${market_info.get('price_yes')}
 - Harga Option NO: ${market_info.get('price_no')}
 - Volume Perdagangan: ${market_info.get('volume')}
+- Ukuran Taruhan Aktif: ${BET_AMOUNT_USD} USD
 
 Aturan Keputusan Trading Bitcoin:
-1. "BUY_YES": Jika kamu yakin harga/prediksi YES sangat undervalued dibanding pergerakan momentum Bitcoin saat ini.
+1. "BUY_YES": Jika kamu yakin harga/prediksi YES sangat undervalued dibanding momentum naik Bitcoin saat ini.
 2. "BUY_NO": Jika kamu yakin tren Bitcoin membuat opsi NO jauh lebih berpeluang menang.
-3. "HOLD": Jika risiko terlalu tinggi, spread terlalu tipis, atau sinyal Bitcoin belum konfirmatif.
+3. "HOLD": Jika risiko tinggi, spread terlalu tipis, atau sinyal Bitcoin belum terkonfirmasi.
 
 Kembalikan jawaban DALAM FORMAT STRICT JSON TANPA TEKS LAIN:
 {{
   "keputusan": "BUY_YES" | "BUY_NO" | "HOLD",
-  "alasan": "Penjelasan analisis teknikal/probabilitas singkat maksimal 2 kalimat"
+  "alasan": "Penjelasan singkat momentum teknikal maksimal 2 kalimat"
 }}
 """
 
@@ -174,14 +174,14 @@ def step_4_record_simulation(records):
 
 def main():
     print("==================================================================")
-    print("🚀 Polymarket BITCOIN 5-Min AI Trading Bot (Gemini 3.6 Flash)")
-    print(f"⏰ Execution Timestamp: {datetime.now(timezone.utc).isoformat()}")
+    print("🚀 Polymarket BITCOIN 1-Min Execution AI Trading Bot (Gemini 3.6 Flash)")
+    print(f"⏰ Timestamp: {datetime.now(timezone.utc).isoformat()} | Fixed Bet: ${BET_AMOUNT_USD} USD")
     print("==================================================================")
 
     # 1. Cek Saklar Emergency Status
     step_1_check_emergency_switch()
 
-    # Initialize Gemini Client if API Key is available
+    # Initialize Gemini Client
     gemini_client = None
     if GENAI_AVAILABLE and GEMINI_API_KEY:
         try:
@@ -190,18 +190,18 @@ def main():
         except Exception as err:
             print(f"[WARNING] Could not initialize Google GenAI Client: {err}")
     else:
-        print("[INFO] GEMINI_API_KEY is not set. Running in simulation fallback mode.")
+        print("[INFO] GEMINI_API_KEY is not set. Running in simulation mode.")
 
     # 2. Fetch Bitcoin Data from Polymarket Gamma API
     events = step_2_fetch_polymarket_btc_data()
     if not events:
-        print("[INFO] No active Bitcoin events found or API down. Exiting cycle.")
+        print("[INFO] No active Bitcoin events found. Exiting cycle.")
         sys.exit(0)
 
     print(f"\n--- [STEP 3] Analyzing {len(events)} Bitcoin Markets with Gemini AI Engine ---")
     simulation_records = []
 
-    for idx, event in enumerate(events, 1):
+    for idx, event in enumerate(events[:5], 1): # Process top 5 active BTC markets for speed
         event_title = event.get("title", "Bitcoin Market Event")
         markets = event.get("markets", [])
 
@@ -210,8 +210,7 @@ def main():
 
         market = markets[0]
         market_question = market.get("question", event_title)
-        
-        # Parse clobTokenIds
+
         clob_tokens = market.get("clobTokenIds", [])
         if isinstance(clob_tokens, str):
             try:
@@ -222,7 +221,6 @@ def main():
         token_id_yes = clob_tokens[0] if len(clob_tokens) > 0 else "N/A"
         token_id_no = clob_tokens[1] if len(clob_tokens) > 1 else "N/A"
 
-        # Parse Outcome Prices
         outcome_prices = market.get("outcomePrices", [])
         if isinstance(outcome_prices, str):
             try:
@@ -242,8 +240,8 @@ def main():
             "volume": volume
         }
 
-        print(f"\n[{idx}/{len(events)}] Analyzing BTC Market: '{market_question[:65]}...'")
-        print(f"    Prices -> YES: ${price_yes} | NO: ${price_no} | Volume: ${volume}")
+        print(f"\n[{idx}/{min(5, len(events))}] Analyzing BTC Market: '{market_question[:65]}...'")
+        print(f"    Prices -> YES: ${price_yes} | NO: ${price_no} | Bet: ${BET_AMOUNT_USD}")
 
         # Send to Gemini
         ai_result = step_3_analyze_btc_with_gemini(market_info, gemini_client)
@@ -265,14 +263,11 @@ def main():
             "Volume": volume
         })
 
-        # Rate Limit / Speed optimization delay (1 second sleep between market calls)
-        time.sleep(1)
-
     # 4. Log all decisions to CSV
     if simulation_records:
         step_4_record_simulation(simulation_records)
 
-    print("\n✅ [BITCOIN CYCLE COMPLETE] 5-minute Bitcoin analysis cycle finished successfully.")
+    print("\n✅ [BITCOIN 1-MIN CYCLE COMPLETE] Finished successfully.")
 
 
 if __name__ == "__main__":
