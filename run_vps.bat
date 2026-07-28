@@ -32,8 +32,10 @@ if %errorlevel% equ 0 (
 
 echo Python Detected: %PY_CMD%
 echo.
-echo 1. Installing Python dependencies (SSL Trusted Host Bypass)...
-%PY_CMD% -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org -r backend/requirements.txt
+echo 1. Upgrading pip & installing core packages (google-genai, requests, pandas)...
+%PY_CMD% -m pip install --upgrade pip --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org
+%PY_CMD% -m pip install requests google-genai pandas eth-account --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org
+%PY_CMD% -m pip install py-polymarket-client --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org
 echo.
 echo 2. Launching 24/7 Bitcoin Trading Bot Loop...
 %PY_CMD% backend/run_vps_247.py
