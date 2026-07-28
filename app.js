@@ -19,14 +19,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let parsedLogData = [];
 
-  // 1. Load saved Worker URL from localStorage
-  const savedUrl = localStorage.getItem("POLYMARKET_WORKER_URL") || "";
-  if (savedUrl) {
-    workerUrlInput.value = savedUrl;
-    fetchBotStatus(savedUrl);
-  } else {
-    updateStatusUI("UNKNOWN");
-  }
+  const DEFAULT_WORKER_URL = "https://bot-control.aangcrypto21.workers.dev";
+
+  // 1. Load saved Worker URL from localStorage or default
+  const savedUrl = localStorage.getItem("POLYMARKET_WORKER_URL") || DEFAULT_WORKER_URL;
+  workerUrlInput.value = savedUrl;
+  fetchBotStatus(savedUrl);
 
   // Save Worker URL
   saveUrlBtn.addEventListener("click", () => {
