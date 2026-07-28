@@ -20,11 +20,25 @@ document.addEventListener("DOMContentLoaded", () => {
   let parsedLogData = [];
 
   const DEFAULT_WORKER_URL = "https://bot-control.aangcrypto21.workers.dev";
+  const GITHUB_RAW_CSV_URL = "https://raw.githubusercontent.com/Faang21/polymarket-ai-trading-bot/main/catatan_simulasi_polymarket.csv";
 
   // 1. Load saved Worker URL from localStorage or default
   const savedUrl = localStorage.getItem("POLYMARKET_WORKER_URL") || DEFAULT_WORKER_URL;
   workerUrlInput.value = savedUrl;
   fetchBotStatus(savedUrl);
+  autoFetchGithubCsv();
+
+  async function autoFetchGithubCsv() {
+    try {
+      const res = await fetch(GITHUB_RAW_CSV_URL);
+      if (res.ok) {
+        const text = await res.text();
+        parseAndRenderCsv(text);
+      }
+    } catch (err) {
+      console.log("Auto-fetch CSV skipped or file not generated yet.");
+    }
+  }
 
   // Save Worker URL
   saveUrlBtn.addEventListener("click", () => {
@@ -170,10 +184,14 @@ document.addEventListener("DOMContentLoaded", () => {
     reader.readAsText(file);
   }
 
+  let decisionChartInstance = null;
+  let timelineChartInstance = null;
+
   function parseAndRenderCsv(csvText) {
     const lines = csvText.split("\n").filter((l) => l.trim().length > 0);
     if (lines.length <= 1) {
       logTableBody.innerHTML = `<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">File CSV kosong atau tidak memiliki data.</td></tr>`;
+      updateChartsAndStats([]);
       return;
     }
 
@@ -200,6 +218,104 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     renderTableRows(parsedLogData);
+    updateChartsAndStats(parsedLogData);
+  }
+
+  function updateChartsAndStats(data) {
+    let buyYesCount = 0;
+    let buyNoCount = 0;
+    let holdCount = 0;
+
+    data.forEach((item) => {
+      const kep = (item.keputusan || "").toUpperCase();
+      if (kep === "BUY_YES") buyYesCount++;
+      else if (kep === "BUY_NO") buyNoCount++;
+      else holdCount++;
+    });
+
+    document.getElementById("statTotal").innerText = data.length;
+    document.getElementById("statBuyYes").innerText = buyYesCount;
+    document.getElementById("statBuyNo").innerText = buyNoCount;
+    document.getElementById("statHold").innerText = holdCount;
+
+    renderDecisionChart(buyYesCount, buyNoCount, holdCount);
+    renderTimelineChart(data);
+  }
+
+  function renderDecisionChart(yes, no, hold) {
+    const ctx = document.getElementById("decisionChart").getContext("2d");
+    if (decisionChartInstance) decisionChartInstance.destroy();
+
+    decisionChartInstance = new Chart(ctx, {
+      type: "doughnut",
+      data: {
+        labels: ["BUY YES", "BUY NO", "HOLD"],
+        datasets: [
+          {
+            data: [yes, no, hold],
+            backgroundColor: ["#10b981", "#f43f5e", "#64748b"],
+            borderColor: "#0f172a",
+            borderWidth: 3,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: "bottom",
+            labels: { color: "#94a3b8", font: { family: "Plus Jakarta Sans" } },
+          },
+        },
+      },
+    });
+  }
+
+  function renderTimelineChart(data) {
+    const ctx = document.getElementById("timelineChart").getContext("2d");
+    if (timelineChartInstance) timelineChartInstance.destroy();
+
+    const chronological = [...data].reverse();
+    const labels = chronological.map((d) => (d.timestamp ? new Date(d.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : ""));
+    
+    let cumulativeScore = 0;
+    const scores = chronological.map((d) => {
+      const kep = (d.keputusan || "").toUpperCase();
+      if (kep === "BUY_YES") cumulativeScore += 1;
+      else if (kep === "BUY_NO") cumulativeScore -= 1;
+      return cumulativeScore;
+    });
+
+    timelineChartInstance = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: "Tren Sentimen Keputusan AI",
+            data: scores,
+            borderColor: "#06b6d4",
+            backgroundColor: "rgba(6, 182, 212, 0.1)",
+            fill: true,
+            tension: 0.3,
+            pointRadius: 4,
+            pointBackgroundColor: "#06b6d4",
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { ticks: { color: "#64748b" }, grid: { color: "rgba(255,255,255,0.05)" } },
+          y: { ticks: { color: "#64748b" }, grid: { color: "rgba(255,255,255,0.05)" } },
+        },
+        plugins: {
+          legend: { labels: { color: "#94a3b8" } },
+        },
+      },
+    });
   }
 
   function parseCsvLine(text) {
