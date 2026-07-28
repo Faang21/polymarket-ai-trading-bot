@@ -8,10 +8,21 @@ import requests
 import urllib3
 from datetime import datetime, timezone
 
-# 1. Global SSL Bypass for environments with clock skew (year 2050 / expired certs)
+# 1. Global SSL & HTTPX Bypass for Gemini SDK (google-genai)
 ssl._create_default_https_context = ssl._create_unverified_context
 os.environ["PYTHONHTTPSVERIFY"] = "0"
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Monkey-patch httpx used by google-genai to disable SSL verification
+try:
+    import httpx
+    _orig_httpx_init = httpx.Client.__init__
+    def _patched_httpx_init(self, *args, **kwargs):
+        kwargs['verify'] = False
+        _orig_httpx_init(self, *args, **kwargs)
+    httpx.Client.__init__ = _patched_httpx_init
+except Exception as e:
+    pass
 
 # Try importing Google GenAI SDK (google-genai)
 try:
@@ -26,7 +37,7 @@ except ImportError:
 CLOUDFLARE_KV_URL = os.environ.get("CLOUDFLARE_KV_URL", "https://bot-control.aangcrypto21.workers.dev/status")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PRIVATE_KEY_BURNER = os.environ.get("PRIVATE_KEY_BURNER", "")
-BET_AMOUNT_USD = 1.0  # $1 USD per trade as requested
+BET_AMOUNT_USD = 1.0
 CSV_FILENAME = "catatan_simulasi_polymarket.csv"
 POLYMARKET_BTC_URL = "https://gamma-api.polymarket.com/events?closed=false&q=btc%20up%20down&limit=15"
 POLYMARKET_FALLBACK_URL = "https://gamma-api.polymarket.com/events?closed=false&q=bitcoin&limit=15"
@@ -81,7 +92,6 @@ def step_2_fetch_polymarket_btc_data():
         if attempt < max_retries:
             time.sleep(base_delay)
 
-    # Fallback to general active markets if specific query fails
     try:
         res = requests.get(POLYMARKET_FALLBACK_URL, timeout=15, verify=False)
         if res.status_code == 200:
@@ -201,7 +211,7 @@ def main():
     print(f"\n--- [STEP 3] Analyzing {len(events)} Bitcoin Markets with Gemini AI Engine ---")
     simulation_records = []
 
-    for idx, event in enumerate(events[:5], 1): # Process top 5 active BTC markets for speed
+    for idx, event in enumerate(events[:5], 1):
         event_title = event.get("title", "Bitcoin Market Event")
         markets = event.get("markets", [])
 
