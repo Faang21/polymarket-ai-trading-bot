@@ -6,6 +6,8 @@
   <title>Polymarket AI Bot - Control Center</title>
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Font Awesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <!-- Custom Google Font -->
@@ -129,7 +131,69 @@
 
     </div>
 
-    <!-- Table Section: Transactions / Simulation Logs -->
+    <!-- Analytics & Charts Section -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="glass-card rounded-xl p-5 border border-slate-800 flex items-center justify-between shadow-lg">
+        <div>
+          <p class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Total Analisis</p>
+          <h4 id="statTotal" class="text-2xl font-black text-white mt-1">0</h4>
+        </div>
+        <div class="w-10 h-10 rounded-xl bg-slate-800 text-cyan-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-chart-simple"></i>
+        </div>
+      </div>
+
+      <div class="glass-card rounded-xl p-5 border border-emerald-500/20 bg-emerald-950/10 flex items-center justify-between shadow-lg">
+        <div>
+          <p class="text-xs text-emerald-400 font-semibold uppercase tracking-wider">Sinyal BUY YES</p>
+          <h4 id="statBuyYes" class="text-2xl font-black text-emerald-300 mt-1">0</h4>
+        </div>
+        <div class="w-10 h-10 rounded-xl bg-emerald-900/40 text-emerald-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-arrow-trend-up"></i>
+        </div>
+      </div>
+
+      <div class="glass-card rounded-xl p-5 border border-rose-500/20 bg-rose-950/10 flex items-center justify-between shadow-lg">
+        <div>
+          <p class="text-xs text-rose-400 font-semibold uppercase tracking-wider">Sinyal BUY NO</p>
+          <h4 id="statBuyNo" class="text-2xl font-black text-rose-300 mt-1">0</h4>
+        </div>
+        <div class="w-10 h-10 rounded-xl bg-rose-900/40 text-rose-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-arrow-trend-down"></i>
+        </div>
+      </div>
+
+      <div class="glass-card rounded-xl p-5 border border-slate-700 bg-slate-900/40 flex items-center justify-between shadow-lg">
+        <div>
+          <p class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Sinyal HOLD</p>
+          <h4 id="statHold" class="text-2xl font-black text-slate-300 mt-1">0</h4>
+        </div>
+        <div class="w-10 h-10 rounded-xl bg-slate-800 text-slate-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-hand"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="lg:col-span-1 glass-card rounded-2xl p-6 shadow-xl space-y-4">
+        <h4 class="text-sm font-bold text-white flex items-center">
+          <i class="fa-solid fa-chart-pie mr-2 text-cyan-400"></i> Distribusi Keputusan AI
+        </h4>
+        <div class="h-64 relative flex items-center justify-center">
+          <canvas id="decisionChart"></canvas>
+        </div>
+      </div>
+
+      <div class="lg:col-span-2 glass-card rounded-2xl p-6 shadow-xl space-y-4">
+        <h4 class="text-sm font-bold text-white flex items-center">
+          <i class="fa-solid fa-chart-line mr-2 text-indigo-400"></i> Tren Keputusan Trading per Waktu
+        </h4>
+        <div class="h-64 relative">
+          <canvas id="timelineChart"></canvas>
+        </div>
+      </div>
+    </div>
     <div class="glass-card rounded-2xl p-6 shadow-xl space-y-4">
       <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div>
