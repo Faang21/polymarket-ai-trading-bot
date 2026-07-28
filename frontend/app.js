@@ -32,6 +32,22 @@ document.addEventListener("DOMContentLoaded", () => {
   fetchBotStatus(savedUrl);
   autoFetchGithubCsv();
 
+  // Auto-refresh CSV log every 10 seconds for real-time live feed from VPS
+  setInterval(autoFetchGithubCsv, 10000);
+
+  async function autoFetchGithubCsv() {
+    try {
+      const cacheBustUrl = GITHUB_RAW_CSV_URL + "?t=" + Date.now();
+      const res = await fetch(cacheBustUrl, { cache: "no-store" });
+      if (res.ok) {
+        const text = await res.text();
+        parseAndRenderCsv(text);
+      }
+    } catch (err) {
+      console.log("Auto-fetch CSV skipped or file not generated yet.");
+    }
+  }
+
   const walletAddressInput = document.getElementById("walletAddressInput");
   const saveWalletBtn = document.getElementById("saveWalletBtn");
   const usdcBalanceText = document.getElementById("usdcBalanceText");
