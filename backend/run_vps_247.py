@@ -10,18 +10,19 @@ os.environ["CLOUDFLARE_KV_URL"] = "https://bot-control.aangcrypto21.workers.dev/
 
 print("=========================================================")
 print("🚀 Polymarket AI Trading Bot 24/7 VPS Engine Active")
-print("Target: Bitcoin (BTC) 5-Minute Up/Down Markets")
-print("Execution Loop: Every 300 seconds (5 minutes)")
+print("Target: Bitcoin (BTC) 1-Minute / 5-Minute Markets")
+print("Execution Loop: Every 60 seconds (1 minute)")
+print("Fixed Bet Amount: $1.00 USD per trade")
 print("=========================================================")
 
 bot_path = os.path.join(os.path.dirname(__file__), "main_bot.py")
 
 while True:
     try:
-        print(f"\n⏰ [{time.strftime('%Y-%m-%d %H:%M:%S')}] Launching 5-minute Bitcoin trading cycle...")
+        print(f"\n⏰ [{time.strftime('%Y-%m-%d %H:%M:%S')}] Launching 1-minute Bitcoin trading cycle...")
         subprocess.run([sys.executable, bot_path], check=False)
     except Exception as e:
         print(f"⚠️ Error executing main_bot.py: {e}")
 
-    print("\n⏳ Sleeping 300 seconds (5 minutes) until next cycle...")
-    time.sleep(300)
+    print("\n⏳ Sleeping 60 seconds (1 minute) until next cycle...")
+    time.sleep(60)
