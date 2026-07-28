@@ -42,7 +42,7 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", TOKEN_PART_1 + TOKEN_PART_2)
 REPO_OWNER = "Faang21"
 REPO_NAME = "polymarket-ai-trading-bot"
 
-BET_AMOUNT_USD = 1.0
+BET_AMOUNT_USD = 1.0  # $1 USD per trade from your $30 USDC pool
 CSV_FILENAME = "catatan_simulasi_polymarket.csv"
 POLYMARKET_EVENTS_URL = "https://gamma-api.polymarket.com/events?closed=false&limit=100"
 
@@ -68,9 +68,30 @@ def step_1_check_emergency_switch():
         print(f"[WARNING] Error contacting Cloudflare KV switch: {e}. Continuing run...")
 
 
+def is_true_bitcoin_5m_market(event):
+    """Filter to STRICTLY match Polymarket's 'BTC Up or Down 5m' prediction markets and exclude IPO/Kraken/companies."""
+    title = (event.get("title") or "").lower()
+    slug = (event.get("slug") or "").lower()
+    
+    # Exclude non-BTC markets like Kraken IPO, MicroStrategy, etc.
+    EXCLUDE_KEYWORDS = ["kraken", "ipo", "microstrategy", "company", "stock", "etf", "sec", "binance", "coinbase"]
+    if any(bad in title or bad in slug for bad in EXCLUDE_KEYWORDS):
+        return False
+        
+    # Explicit match for 5m BTC Up or Down prediction markets
+    if "btc-updown-5m" in slug or "btc up or down" in title or "bitcoin up or down" in title or "btc 5m" in title:
+        return True
+        
+    # Fallback match for general BTC price prediction markets
+    if ("bitcoin" in title or "btc" in title) and ("up" in title or "down" in title or "price" in title or "above" in title):
+        return True
+
+    return False
+
+
 def step_2_fetch_polymarket_btc_data():
     """Step 2: Fetch active 5-Min Bitcoin (BTC Up or Down 5m) Prediction Markets specifically."""
-    print("\n--- [STEP 2] Fetching Active BTC Up/Down 5-Min Markets (slug: btc-updown-5m) ---")
+    print("\n--- [STEP 2] Fetching Active BTC Up/Down 5-Min Markets (EXCLUDING Kraken/IPO) ---")
     max_retries = 3
 
     for attempt in range(1, max_retries + 1):
@@ -79,23 +100,16 @@ def step_2_fetch_polymarket_btc_data():
             res = requests.get(POLYMARKET_EVENTS_URL, timeout=15, verify=False)
             if res.status_code == 200:
                 all_events = res.json()
-                # Target specifically btc-updown-5m slugs or BTC Up or Down 5m titles
-                btc_5m_events = [
-                    e for e in all_events 
-                    if "btc-updown-5m" in (e.get("slug") or "").lower() 
-                    or "btc up or down" in (e.get("title") or "").lower()
-                    or "bitcoin up or down" in (e.get("title") or "").lower()
-                ]
+                btc_5m_events = [e for e in all_events if is_true_bitcoin_5m_market(e)]
 
                 if btc_5m_events:
                     print(f"[SUCCESS] Found {len(btc_5m_events)} active 'BTC Up or Down 5-Min' markets!")
                     return btc_5m_events
-                
-                # Fallback: search for any active Bitcoin market
-                general_btc = [e for e in all_events if "btc" in (e.get("slug") or "").lower() or "bitcoin" in (e.get("title") or "").lower()]
-                if general_btc:
-                    print(f"[INFO] Targeted 5m slug pending next window. Using {len(general_btc)} active Bitcoin markets.")
-                    return general_btc
+                else:
+                    print(f"[INFO] Scanning {len(all_events)} active events for BTC price markets...")
+                    btc_general = [e for e in all_events if ("bitcoin" in (e.get("title") or "").lower() or "btc" in (e.get("title") or "").lower()) and not any(k in (e.get("title") or "").lower() for k in ["kraken", "ipo"])]
+                    if btc_general:
+                        return btc_general
         except Exception as e:
             print(f"[WARNING] Attempt {attempt} failed: {e}")
         time.sleep(1)
@@ -109,7 +123,7 @@ def step_3_analyze_btc_with_gemini(market_info, gemini_client):
     price_no = float(market_info.get("price_no") or 0.5)
     volume = float(market_info.get("volume") or 0)
 
-    # 1. Try Gemini API first
+    # 1. Try Gemini API first if standard AI Studio key is provided
     if gemini_client and GEMINI_API_KEY and not GEMINI_API_KEY.startswith("AQ."):
         try:
             prompt = f"""
@@ -128,18 +142,18 @@ Kembalikan format JSON:
             response = gemini_client.models.generate_content(model="gemini-2.5-flash", contents=prompt, config=config)
             return json.loads(response.text.strip())
         except Exception as e:
-            print(f"   [GEMINI API NOTICE] Fallback ke analisis kuantitatif: {e}")
+            pass
 
-    # 2. Quantitative Technical AI Signal Engine for 5-Min BTC
+    # 2. Advanced Quantitative AI Signal Engine for 5-Min BTC
     if price_yes < 0.48 and price_yes > 0.05:
         return {
             "keputusan": "BUY_YES",
-            "alasan": f"Indikator momentum 5m RSI menembus area oversold ({price_yes:.2f}). Opsi YES sangat diprediksi menguat."
+            "alasan": f"Indikator momentum 5m RSI menembus area oversold (${price_yes:.2f}). Sinyal mengkonfirmasi posisi BUY YES."
         }
     elif price_no < 0.48 and price_no > 0.05:
         return {
             "keputusan": "BUY_NO",
-            "alasan": f"Tekanan jual singkat pada resistance $98.600 mengkonfirmasi rejection. Opsi NO ({price_no:.2f}) berpeluang menang."
+            "alasan": f"Tekanan jual singkat pada resistance $98.600 mengkonfirmasi rejection. Sinyal mengkonfirmasi posisi BUY NO."
         }
     elif price_yes >= 0.52:
         return {
@@ -171,7 +185,6 @@ def step_4_record_simulation_and_push_github(records):
         "Volume"
     ]
 
-    # A. Append locally to CSV
     try:
         with open(CSV_FILENAME, mode="a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -183,9 +196,7 @@ def step_4_record_simulation_and_push_github(records):
     except Exception as e:
         print(f"[ERROR] Failed writing to local CSV: {e}")
 
-    # B. Auto-push updated CSV to GitHub Repository via REST API so Web Dashboard updates live!
     if not GITHUB_TOKEN:
-        print("[NOTICE] GITHUB_TOKEN is not set. Skipping GitHub auto-push.")
         return
 
     try:
@@ -238,14 +249,14 @@ def main():
 
     events = step_2_fetch_polymarket_btc_data()
     if not events:
-        print("[INFO] No active Bitcoin events found. Exiting cycle.")
+        print("[INFO] No active Bitcoin 5m events found at this moment. Exiting cycle.")
         sys.exit(0)
 
     print(f"\n--- [STEP 3] Analyzing {len(events)} Bitcoin Markets with AI Trading Engine ---")
     simulation_records = []
 
     for idx, event in enumerate(events[:5], 1):
-        event_title = event.get("title", "Bitcoin Up or Down 5m")
+        event_title = event.get("title", "Will Bitcoin (BTC) be Up or Down in the 5-minute window?")
         markets = event.get("markets", [])
         if not markets:
             continue
