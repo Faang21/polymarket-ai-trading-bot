@@ -1,0 +1,3 @@
+Timestamp,EventTitle,MarketQuestion,TokenID_YES,TokenID_NO,Price_YES,Price_NO,Keputusan,Alasan,Volume
+2026-07-28T07:12:00.000Z,"Fed Interest Rate Decision","Will Fed cut interest rates in next meeting?","0x123","0x456","0.62","0.38","BUY_YES","Analisis probabilistik mendukung pemotongan suku bunga sebesar 25 bps.","1250000"
+2026-07-28T07:07:00.000Z,"Bitcoin Price Target","Will Bitcoin reach $100k before Q4?","0x789","0x012","0.45","0.55","HOLD","Volatilitas pasar kripto tinggi dan konsolidasi harga masih berlanjut.","3400000"
