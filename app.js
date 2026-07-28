@@ -18,187 +18,31 @@ document.addEventListener("DOMContentLoaded", () => {
   const searchLogInput = document.getElementById("searchLogInput");
 
   let parsedLogData = [];
+  let decisionChartInstance = null;
+  let timelineChartInstance = null;
+  let equityChartInstance = null;
 
   const DEFAULT_WORKER_URL = "https://bot-control.aangcrypto21.workers.dev";
   const GITHUB_RAW_CSV_URL = "https://raw.githubusercontent.com/Faang21/polymarket-ai-trading-bot/main/catatan_simulasi_polymarket.csv";
+  const DEFAULT_WALLET = "0xa959f26847211f71A22aDb087EBe50E0743e7D66";
 
-  // 1. Load saved Worker URL from localStorage or default
+  // 1. Initial Setup: Load Saved URLs and Wallet
   const savedUrl = localStorage.getItem("POLYMARKET_WORKER_URL") || DEFAULT_WORKER_URL;
   workerUrlInput.value = savedUrl;
   fetchBotStatus(savedUrl);
   autoFetchGithubCsv();
 
-  async function autoFetchGithubCsv() {
-    try {
-      const res = await fetch(GITHUB_RAW_CSV_URL);
-      if (res.ok) {
-        const text = await res.text();
-        parseAndRenderCsv(text);
-      }
-    } catch (err) {
-      console.log("Auto-fetch CSV skipped or file not generated yet.");
-    }
-  }
-
   const walletAddressInput = document.getElementById("walletAddressInput");
   const saveWalletBtn = document.getElementById("saveWalletBtn");
   const usdcBalanceText = document.getElementById("usdcBalanceText");
   const polBalanceText = document.getElementById("polBalanceText");
-  let equityChartInstance = null;
 
-  // Load saved wallet address or set default burner address
-  const DEFAULT_WALLET = "0xa959f26847211f71A22aDb087EBe50E0743e7D66";
   const savedWallet = localStorage.getItem("POLYMARKET_WALLET_ADDRESS") || DEFAULT_WALLET;
   walletAddressInput.value = savedWallet;
   fetchPolygonWalletBalances(savedWallet);
 
-  saveWalletBtn.addEventListener("click", () => {
-    const addr = walletAddressInput.value.trim();
-    if (addr && addr.startsWith("0x") && addr.length === 42) {
-      localStorage.setItem("POLYMARKET_WALLET_ADDRESS", addr);
-      fetchPolygonWalletBalances(addr);
-    } else {
-      alert("Harap masukkan alamat Ethereum / Polygon (0x...) yang valid 42 karakter.");
-    }
-  });
-
-  async function fetchPolygonWalletBalances(address) {
-    usdcBalanceText.innerText = "Loading...";
-    polBalanceText.innerText = "Loading...";
-
-    try {
-      // 1. Fetch POL (MATIC) native balance from Polygon RPC
-      const rpcBodyPol = JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_getBalance",
-        params: [address, "latest"],
-        id: 1,
-      });
-
-      const resPol = await fetch("https://polygon-rpc.com", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: rpcBodyPol,
-      });
-
-      if (resPol.ok) {
-        const dataPol = await resPol.json();
-        if (dataPol.result) {
-          const polWei = BigInt(dataPol.result);
-          const polAmount = (Number(polWei) / 1e18).toFixed(3);
-          polBalanceText.innerText = `${polAmount} POL`;
-        }
-      }
-
-      // 2. Fetch Native USDC (0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359) & Bridged USDC.e (0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174)
-      const cleanAddr = address.substring(2).padStart(64, "0");
-      let totalUsdcVal = 0;
-
-      // Native USDC
-      try {
-        const resUsdcNative = await fetch("https://polygon-rpc.com", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            method: "eth_call",
-            params: [{ to: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", data: "0x70a08231" + cleanAddr }, "latest"],
-            id: 2
-          })
-        });
-        if (resUsdcNative.ok) {
-          const dataUsdc = await resUsdcNative.json();
-          if (dataUsdc.result && dataUsdc.result !== "0x") {
-            totalUsdcVal += Number(BigInt(dataUsdc.result)) / 1e6;
-          }
-        }
-      } catch(e) {}
-
-      // Bridged USDC.e
-      try {
-        const resUsdcBridged = await fetch("https://polygon-rpc.com", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            method: "eth_call",
-            params: [{ to: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", data: "0x70a08231" + cleanAddr }, "latest"],
-            id: 3
-          })
-        });
-        if (resUsdcBridged.ok) {
-          const dataUsdcE = await resUsdcBridged.json();
-          if (dataUsdcE.result && dataUsdcE.result !== "0x") {
-            totalUsdcVal += Number(BigInt(dataUsdcE.result)) / 1e6;
-          }
-        }
-      } catch(e) {}
-
-      const formattedUsdc = totalUsdcVal.toFixed(2);
-      usdcBalanceText.innerText = `$${formattedUsdc}`;
-      renderEquityChart(formattedUsdc);
-
-    } catch (err) {
-      console.log("Error fetching Polygon RPC balances:", err);
-      usdcBalanceText.innerText = "$0.00";
-      polBalanceText.innerText = "0.00 POL";
-      renderEquityChart("0.00");
-    }
-  }
-
-  function renderEquityChart(currentUsdcStr) {
-    const ctx = document.getElementById("equityChart").getContext("2d");
-    if (equityChartInstance) equityChartInstance.destroy();
-
-    const currentUsdc = parseFloat(currentUsdcStr) || 0;
-    // Generate equity curve time series tracking USDC growth
-    const labels = ["12:00", "13:00", "14:00", "14:30", "14:45", "Live Now"];
-    const equityData = [
-      currentUsdc,
-      currentUsdc,
-      currentUsdc,
-      currentUsdc,
-      currentUsdc,
-      currentUsdc,
-    ];
-
-    equityChartInstance = new Chart(ctx, {
-      type: "line",
-      data: {
-        labels: labels,
-        datasets: [
-          {
-            label: "USDC Portfolio Value ($)",
-            data: equityData,
-            borderColor: "#10b981",
-            backgroundColor: "rgba(16, 185, 129, 0.15)",
-            fill: true,
-            tension: 0.4,
-            pointRadius: 5,
-            pointBackgroundColor: "#10b981",
-            pointBorderColor: "#ffffff",
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          x: { ticks: { color: "#64748b" }, grid: { color: "rgba(255,255,255,0.05)" } },
-          y: {
-            ticks: {
-              color: "#64748b",
-              callback: (val) => "$" + val.toFixed(2),
-            },
-            grid: { color: "rgba(255,255,255,0.05)" },
-          },
-        },
-        plugins: {
-          legend: { labels: { color: "#94a3b8" } },
-        },
-      },
-    });
-  }
+  // Event Listeners for Configuration
+  saveUrlBtn.addEventListener("click", () => {
     const url = workerUrlInput.value.trim();
     if (!url) {
       alert("Harap masukkan URL Cloudflare Worker yang valid.");
@@ -210,18 +54,25 @@ document.addEventListener("DOMContentLoaded", () => {
     fetchBotStatus(url);
   });
 
-  // Refresh status button
+  saveWalletBtn.addEventListener("click", () => {
+    const addr = walletAddressInput.value.trim();
+    if (addr && addr.startsWith("0x") && addr.length === 42) {
+      localStorage.setItem("POLYMARKET_WALLET_ADDRESS", addr);
+      fetchPolygonWalletBalances(addr);
+    } else {
+      alert("Harap masukkan alamat Ethereum / Polygon (0x...) yang valid 42 karakter.");
+    }
+  });
+
   refreshStatusBtn.addEventListener("click", () => {
     const url = getWorkerUrl();
     if (url) fetchBotStatus(url);
   });
 
-  // START BOT button click
   startBotBtn.addEventListener("click", async () => {
     await sendToggleRequest("RUNNING");
   });
 
-  // EMERGENCY STOP button click
   stopBotBtn.addEventListener("click", async () => {
     await sendToggleRequest("STOPPED");
   });
@@ -232,7 +83,7 @@ document.addEventListener("DOMContentLoaded", () => {
       actionFeedback.innerHTML = `<span class="text-amber-400">⚠️ Harap masukkan URL Cloudflare Worker terlebih dahulu.</span>`;
       return null;
     }
-    return url.replace(/\/+$/, ""); // Trim trailing slashes
+    return url.replace(/\/+$/, "");
   }
 
   // Fetch status from Cloudflare Worker GET /status
@@ -274,7 +125,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const data = await res.json();
         const currentStatus = data.status || targetStatus;
         updateStatusUI(currentStatus);
-        
+
         if (currentStatus === "RUNNING") {
           actionFeedback.innerHTML = `<span class="text-emerald-400 font-semibold">✅ Saklar Diaktifkan: Bot RUNNING! (Eksekusi tiap 5 min).</span>`;
         } else {
@@ -307,18 +158,144 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Web3 Polygon RPC Balances
+  async function fetchPolygonWalletBalances(address) {
+    usdcBalanceText.innerText = "Loading...";
+    polBalanceText.innerText = "Loading...";
+
+    try {
+      // 1. Fetch POL (MATIC) native balance
+      const resPol = await fetch("https://polygon-rpc.com", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "eth_getBalance",
+          params: [address, "latest"],
+          id: 1,
+        }),
+      });
+
+      if (resPol.ok) {
+        const dataPol = await resPol.json();
+        if (dataPol.result) {
+          const polWei = BigInt(dataPol.result);
+          const polAmount = (Number(polWei) / 1e18).toFixed(3);
+          polBalanceText.innerText = `${polAmount} POL`;
+        }
+      }
+
+      // 2. Fetch Native USDC & Bridged USDC.e
+      const cleanAddr = address.substring(2).padStart(64, "0");
+      let totalUsdcVal = 0;
+
+      try {
+        const resUsdcNative = await fetch("https://polygon-rpc.com", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "eth_call",
+            params: [{ to: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", data: "0x70a08231" + cleanAddr }, "latest"],
+            id: 2
+          })
+        });
+        if (resUsdcNative.ok) {
+          const dataUsdc = await resUsdcNative.json();
+          if (dataUsdc.result && dataUsdc.result !== "0x") {
+            totalUsdcVal += Number(BigInt(dataUsdc.result)) / 1e6;
+          }
+        }
+      } catch(e) {}
+
+      try {
+        const resUsdcBridged = await fetch("https://polygon-rpc.com", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "eth_call",
+            params: [{ to: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", data: "0x70a08231" + cleanAddr }, "latest"],
+            id: 3
+          })
+        });
+        if (resUsdcBridged.ok) {
+          const dataUsdcE = await resUsdcBridged.json();
+          if (dataUsdcE.result && dataUsdcE.result !== "0x") {
+            totalUsdcVal += Number(BigInt(dataUsdcE.result)) / 1e6;
+          }
+        }
+      } catch(e) {}
+
+      const formattedUsdc = totalUsdcVal.toFixed(2);
+      usdcBalanceText.innerText = `$${formattedUsdc}`;
+      renderEquityChart(formattedUsdc);
+
+    } catch (err) {
+      console.log("Error fetching Polygon RPC balances:", err);
+      usdcBalanceText.innerText = "$0.00";
+      polBalanceText.innerText = "0.00 POL";
+      renderEquityChart("0.00");
+    }
+  }
+
+  function renderEquityChart(currentUsdcStr) {
+    const ctxElement = document.getElementById("equityChart");
+    if (!ctxElement) return;
+    const ctx = ctxElement.getContext("2d");
+    if (equityChartInstance) equityChartInstance.destroy();
+
+    const currentUsdc = parseFloat(currentUsdcStr) || 0;
+    const labels = ["12:00", "13:00", "14:00", "14:30", "14:45", "Live Now"];
+    const equityData = [currentUsdc, currentUsdc, currentUsdc, currentUsdc, currentUsdc, currentUsdc];
+
+    equityChartInstance = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: "USDC Portfolio Value ($)",
+            data: equityData,
+            borderColor: "#10b981",
+            backgroundColor: "rgba(16, 185, 129, 0.15)",
+            fill: true,
+            tension: 0.4,
+            pointRadius: 5,
+            pointBackgroundColor: "#10b981",
+            pointBorderColor: "#ffffff",
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { ticks: { color: "#64748b" }, grid: { color: "rgba(255,255,255,0.05)" } },
+          y: {
+            ticks: {
+              color: "#64748b",
+              callback: (val) => "$" + val.toFixed(2),
+            },
+            grid: { color: "rgba(255,255,255,0.05)" },
+          },
+        },
+        plugins: {
+          legend: { labels: { color: "#94a3b8" } },
+        },
+      },
+    });
+  }
+
   // CSV Parsing and File Handling
   csvUploadArea.addEventListener("click", () => csvFileInput.click());
   loadCsvBtn.addEventListener("click", () => csvFileInput.click());
 
   csvFileInput.addEventListener("change", (e) => {
     const file = e.target.files[0];
-    if (file) {
-      readCsvFile(file);
-    }
+    if (file) readCsvFile(file);
   });
 
-  // Drag and drop support
   csvUploadArea.addEventListener("dragover", (e) => {
     e.preventDefault();
     csvUploadArea.classList.add("border-cyan-500");
@@ -327,22 +304,26 @@ document.addEventListener("DOMContentLoaded", () => {
   csvUploadArea.addEventListener("drop", (e) => {
     e.preventDefault();
     csvUploadArea.classList.remove("border-cyan-500");
-    if (e.dataTransfer.files.length > 0) {
-      readCsvFile(e.dataTransfer.files[0]);
-    }
+    if (e.dataTransfer.files.length > 0) readCsvFile(e.dataTransfer.files[0]);
   });
+
+  async function autoFetchGithubCsv() {
+    try {
+      const res = await fetch(GITHUB_RAW_CSV_URL);
+      if (res.ok) {
+        const text = await res.text();
+        parseAndRenderCsv(text);
+      }
+    } catch (err) {
+      console.log("Auto-fetch CSV skipped or file not generated yet.");
+    }
+  }
 
   function readCsvFile(file) {
     const reader = new FileReader();
-    reader.onload = (evt) => {
-      const text = evt.target.result;
-      parseAndRenderCsv(text);
-    };
+    reader.onload = (evt) => parseAndRenderCsv(evt.target.result);
     reader.readAsText(file);
   }
-
-  let decisionChartInstance = null;
-  let timelineChartInstance = null;
 
   function parseAndRenderCsv(csvText) {
     const lines = csvText.split("\n").filter((l) => l.trim().length > 0);
@@ -352,11 +333,9 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
     parsedLogData = [];
 
     for (let i = lines.length - 1; i >= 1; i--) {
-      // Parse CSV line handling potential quotes
       const rowValues = parseCsvLine(lines[i]);
       if (rowValues.length >= 7) {
         parsedLogData.push({
@@ -390,17 +369,24 @@ document.addEventListener("DOMContentLoaded", () => {
       else holdCount++;
     });
 
-    document.getElementById("statTotal").innerText = data.length;
-    document.getElementById("statBuyYes").innerText = buyYesCount;
-    document.getElementById("statBuyNo").innerText = buyNoCount;
-    document.getElementById("statHold").innerText = holdCount;
+    const elTotal = document.getElementById("statTotal");
+    const elYes = document.getElementById("statBuyYes");
+    const elNo = document.getElementById("statBuyNo");
+    const elHold = document.getElementById("statHold");
+
+    if (elTotal) elTotal.innerText = data.length;
+    if (elYes) elYes.innerText = buyYesCount;
+    if (elNo) elNo.innerText = buyNoCount;
+    if (elHold) elHold.innerText = holdCount;
 
     renderDecisionChart(buyYesCount, buyNoCount, holdCount);
     renderTimelineChart(data);
   }
 
   function renderDecisionChart(yes, no, hold) {
-    const ctx = document.getElementById("decisionChart").getContext("2d");
+    const ctxElement = document.getElementById("decisionChart");
+    if (!ctxElement) return;
+    const ctx = ctxElement.getContext("2d");
     if (decisionChartInstance) decisionChartInstance.destroy();
 
     decisionChartInstance = new Chart(ctx, {
@@ -430,12 +416,14 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderTimelineChart(data) {
-    const ctx = document.getElementById("timelineChart").getContext("2d");
+    const ctxElement = document.getElementById("timelineChart");
+    if (!ctxElement) return;
+    const ctx = ctxElement.getContext("2d");
     if (timelineChartInstance) timelineChartInstance.destroy();
 
     const chronological = [...data].reverse();
     const labels = chronological.map((d) => (d.timestamp ? new Date(d.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : ""));
-    
+
     let cumulativeScore = 0;
     const scores = chronological.map((d) => {
       const kep = (d.keputusan || "").toUpperCase();
