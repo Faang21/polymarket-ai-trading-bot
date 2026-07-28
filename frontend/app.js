@@ -28,7 +28,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 1. Initial Setup: Load Saved URLs and Wallet
   const savedUrl = localStorage.getItem("POLYMARKET_WORKER_URL") || DEFAULT_WORKER_URL;
-  workerUrlInput.value = savedUrl;
+  if (workerUrlInput) workerUrlInput.value = savedUrl;
   fetchBotStatus(savedUrl);
   autoFetchGithubCsv();
 
@@ -38,49 +38,61 @@ document.addEventListener("DOMContentLoaded", () => {
   const polBalanceText = document.getElementById("polBalanceText");
 
   const savedWallet = localStorage.getItem("POLYMARKET_WALLET_ADDRESS") || DEFAULT_WALLET;
-  walletAddressInput.value = savedWallet;
+  if (walletAddressInput) walletAddressInput.value = savedWallet;
   fetchPolygonWalletBalances(savedWallet);
 
   // Event Listeners for Configuration
-  saveUrlBtn.addEventListener("click", () => {
-    const url = workerUrlInput.value.trim();
-    if (!url) {
-      alert("Harap masukkan URL Cloudflare Worker yang valid.");
-      return;
-    }
-    localStorage.setItem("POLYMARKET_WORKER_URL", url);
-    urlSavedNotice.classList.remove("hidden");
-    setTimeout(() => urlSavedNotice.classList.add("hidden"), 3000);
-    fetchBotStatus(url);
-  });
+  if (saveUrlBtn) {
+    saveUrlBtn.addEventListener("click", () => {
+      const url = workerUrlInput.value.trim();
+      if (!url) {
+        alert("Harap masukkan URL Cloudflare Worker yang valid.");
+        return;
+      }
+      localStorage.setItem("POLYMARKET_WORKER_URL", url);
+      if (urlSavedNotice) {
+        urlSavedNotice.classList.remove("hidden");
+        setTimeout(() => urlSavedNotice.classList.add("hidden"), 3000);
+      }
+      fetchBotStatus(url);
+    });
+  }
 
-  saveWalletBtn.addEventListener("click", () => {
-    const addr = walletAddressInput.value.trim();
-    if (addr && addr.startsWith("0x") && addr.length === 42) {
-      localStorage.setItem("POLYMARKET_WALLET_ADDRESS", addr);
-      fetchPolygonWalletBalances(addr);
-    } else {
-      alert("Harap masukkan alamat Ethereum / Polygon (0x...) yang valid 42 karakter.");
-    }
-  });
+  if (saveWalletBtn) {
+    saveWalletBtn.addEventListener("click", () => {
+      const addr = walletAddressInput.value.trim();
+      if (addr && addr.startsWith("0x") && addr.length === 42) {
+        localStorage.setItem("POLYMARKET_WALLET_ADDRESS", addr);
+        fetchPolygonWalletBalances(addr);
+      } else {
+        alert("Harap masukkan alamat Ethereum / Polygon (0x...) yang valid 42 karakter.");
+      }
+    });
+  }
 
-  refreshStatusBtn.addEventListener("click", () => {
-    const url = getWorkerUrl();
-    if (url) fetchBotStatus(url);
-  });
+  if (refreshStatusBtn) {
+    refreshStatusBtn.addEventListener("click", () => {
+      const url = getWorkerUrl();
+      if (url) fetchBotStatus(url);
+    });
+  }
 
-  startBotBtn.addEventListener("click", async () => {
-    await sendToggleRequest("RUNNING");
-  });
+  if (startBotBtn) {
+    startBotBtn.addEventListener("click", async () => {
+      await sendToggleRequest("RUNNING");
+    });
+  }
 
-  stopBotBtn.addEventListener("click", async () => {
-    await sendToggleRequest("STOPPED");
-  });
+  if (stopBotBtn) {
+    stopBotBtn.addEventListener("click", async () => {
+      await sendToggleRequest("STOPPED");
+    });
+  }
 
   function getWorkerUrl() {
-    const url = workerUrlInput.value.trim();
+    const url = workerUrlInput ? workerUrlInput.value.trim() : DEFAULT_WORKER_URL;
     if (!url) {
-      actionFeedback.innerHTML = `<span class="text-amber-400">⚠️ Harap masukkan URL Cloudflare Worker terlebih dahulu.</span>`;
+      if (actionFeedback) actionFeedback.innerHTML = `<span class="text-amber-400">⚠️ Harap masukkan URL Cloudflare Worker terlebih dahulu.</span>`;
       return null;
     }
     return url.replace(/\/+$/, "");
@@ -88,7 +100,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Fetch status from Cloudflare Worker GET /status
   async function fetchBotStatus(baseUrl) {
-    statusText.innerText = "CHECKING...";
+    if (statusText) statusText.innerText = "CHECKING...";
     try {
       const endpoint = `${baseUrl}/status`;
       const res = await fetch(endpoint);
@@ -109,9 +121,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const baseUrl = getWorkerUrl();
     if (!baseUrl) return;
 
-    actionFeedback.innerHTML = `<span class="text-slate-400">Mengirimkan sinyal saklar ke Cloudflare Worker...</span>`;
-    startBotBtn.disabled = true;
-    stopBotBtn.disabled = true;
+    if (actionFeedback) actionFeedback.innerHTML = `<span class="text-slate-400">Mengirimkan sinyal saklar ke Cloudflare Worker...</span>`;
+    if (startBotBtn) startBotBtn.disabled = true;
+    if (stopBotBtn) stopBotBtn.disabled = true;
 
     try {
       const endpoint = `${baseUrl}/toggle`;
@@ -126,25 +138,28 @@ document.addEventListener("DOMContentLoaded", () => {
         const currentStatus = data.status || targetStatus;
         updateStatusUI(currentStatus);
 
-        if (currentStatus === "RUNNING") {
-          actionFeedback.innerHTML = `<span class="text-emerald-400 font-semibold">✅ Saklar Diaktifkan: Bot RUNNING! (Eksekusi tiap 5 min).</span>`;
-        } else {
-          actionFeedback.innerHTML = `<span class="text-rose-400 font-semibold">🚨 EMERGENCY STOP Berhasil! Bot dihentikan.</span>`;
+        if (actionFeedback) {
+          if (currentStatus === "RUNNING") {
+            actionFeedback.innerHTML = `<span class="text-emerald-400 font-semibold">✅ Saklar Diaktifkan: Bot RUNNING! (Eksekusi tiap 5 min).</span>`;
+          } else {
+            actionFeedback.innerHTML = `<span class="text-rose-400 font-semibold">🚨 EMERGENCY STOP Berhasil! Bot dihentikan.</span>`;
+          }
         }
       } else {
-        actionFeedback.innerHTML = `<span class="text-rose-400">Gagal mengubah status (HTTP ${res.status}).</span>`;
+        if (actionFeedback) actionFeedback.innerHTML = `<span class="text-rose-400">Gagal mengubah status (HTTP ${res.status}).</span>`;
       }
     } catch (err) {
       console.error("Error toggling bot status:", err);
-      actionFeedback.innerHTML = `<span class="text-rose-400">Error koneksi ke Cloudflare Worker.</span>`;
+      if (actionFeedback) actionFeedback.innerHTML = `<span class="text-rose-400">Error koneksi ke Cloudflare Worker.</span>`;
     } finally {
-      startBotBtn.disabled = false;
-      stopBotBtn.disabled = false;
+      if (startBotBtn) startBotBtn.disabled = false;
+      if (stopBotBtn) stopBotBtn.disabled = false;
     }
   }
 
   // Update UI Badge based on status
   function updateStatusUI(status) {
+    if (!statusBadge) return;
     const upper = (status || "").toUpperCase();
     if (upper === "RUNNING") {
       statusBadge.className = "flex items-center space-x-2 px-4 py-2 rounded-full glass-card border border-emerald-500/50 bg-emerald-950/40 text-emerald-300";
@@ -160,11 +175,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Web3 Polygon RPC Balances
   async function fetchPolygonWalletBalances(address) {
-    usdcBalanceText.innerText = "Loading...";
-    polBalanceText.innerText = "Loading...";
+    if (usdcBalanceText) usdcBalanceText.innerText = "Loading...";
+    if (polBalanceText) polBalanceText.innerText = "Loading...";
 
     try {
-      // 1. Fetch POL (MATIC) native balance
       const resPol = await fetch("https://polygon-rpc.com", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -181,11 +195,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (dataPol.result) {
           const polWei = BigInt(dataPol.result);
           const polAmount = (Number(polWei) / 1e18).toFixed(3);
-          polBalanceText.innerText = `${polAmount} POL`;
+          if (polBalanceText) polBalanceText.innerText = `${polAmount} POL`;
         }
       }
 
-      // 2. Fetch Native USDC & Bridged USDC.e
       const cleanAddr = address.substring(2).padStart(64, "0");
       let totalUsdcVal = 0;
 
@@ -228,13 +241,13 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch(e) {}
 
       const formattedUsdc = totalUsdcVal.toFixed(2);
-      usdcBalanceText.innerText = `$${formattedUsdc}`;
+      if (usdcBalanceText) usdcBalanceText.innerText = `$${formattedUsdc}`;
       renderEquityChart(formattedUsdc);
 
     } catch (err) {
       console.log("Error fetching Polygon RPC balances:", err);
-      usdcBalanceText.innerText = "$0.00";
-      polBalanceText.innerText = "0.00 POL";
+      if (usdcBalanceText) usdcBalanceText.innerText = "$0.00";
+      if (polBalanceText) polBalanceText.innerText = "0.00 POL";
       renderEquityChart("0.00");
     }
   }
@@ -275,7 +288,7 @@ document.addEventListener("DOMContentLoaded", () => {
           y: {
             ticks: {
               color: "#64748b",
-              callback: (val) => "$" + val.toFixed(2),
+              callback: (val) => "$" + Number(val).toFixed(2),
             },
             grid: { color: "rgba(255,255,255,0.05)" },
           },
@@ -288,24 +301,28 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // CSV Parsing and File Handling
-  csvUploadArea.addEventListener("click", () => csvFileInput.click());
-  loadCsvBtn.addEventListener("click", () => csvFileInput.click());
+  if (csvUploadArea) csvUploadArea.addEventListener("click", () => csvFileInput && csvFileInput.click());
+  if (loadCsvBtn) loadCsvBtn.addEventListener("click", () => csvFileInput && csvFileInput.click());
 
-  csvFileInput.addEventListener("change", (e) => {
-    const file = e.target.files[0];
-    if (file) readCsvFile(file);
-  });
+  if (csvFileInput) {
+    csvFileInput.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) readCsvFile(file);
+    });
+  }
 
-  csvUploadArea.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    csvUploadArea.classList.add("border-cyan-500");
-  });
-  csvUploadArea.addEventListener("dragleave", () => csvUploadArea.classList.remove("border-cyan-500"));
-  csvUploadArea.addEventListener("drop", (e) => {
-    e.preventDefault();
-    csvUploadArea.classList.remove("border-cyan-500");
-    if (e.dataTransfer.files.length > 0) readCsvFile(e.dataTransfer.files[0]);
-  });
+  if (csvUploadArea) {
+    csvUploadArea.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      csvUploadArea.classList.add("border-cyan-500");
+    });
+    csvUploadArea.addEventListener("dragleave", () => csvUploadArea.classList.remove("border-cyan-500"));
+    csvUploadArea.addEventListener("drop", (e) => {
+      e.preventDefault();
+      csvUploadArea.classList.remove("border-cyan-500");
+      if (e.dataTransfer.files.length > 0) readCsvFile(e.dataTransfer.files[0]);
+    });
+  }
 
   async function autoFetchGithubCsv() {
     try {
@@ -328,7 +345,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function parseAndRenderCsv(csvText) {
     const lines = csvText.split("\n").filter((l) => l.trim().length > 0);
     if (lines.length <= 1) {
-      logTableBody.innerHTML = `<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">File CSV kosong atau tidak memiliki data.</td></tr>`;
+      if (logTableBody) logTableBody.innerHTML = `<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">File CSV kosong atau tidak memiliki data.</td></tr>`;
       updateChartsAndStats([]);
       return;
     }
@@ -478,6 +495,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderTableRows(data) {
+    if (!logTableBody) return;
     if (!data || data.length === 0) {
       logTableBody.innerHTML = `<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">Tidak ada log yang sesuai filter pencarian.</td></tr>`;
       return;
@@ -513,20 +531,22 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Search filter
-  searchLogInput.addEventListener("input", (e) => {
-    const q = e.target.value.toLowerCase().trim();
-    if (!q) {
-      renderTableRows(parsedLogData);
-      return;
-    }
-    const filtered = parsedLogData.filter((item) => {
-      return (
-        item.marketQuestion.toLowerCase().includes(q) ||
-        item.eventTitle.toLowerCase().includes(q) ||
-        item.keputusan.toLowerCase().includes(q) ||
-        item.alasan.toLowerCase().includes(q)
-      );
+  if (searchLogInput) {
+    searchLogInput.addEventListener("input", (e) => {
+      const q = e.target.value.toLowerCase().trim();
+      if (!q) {
+        renderTableRows(parsedLogData);
+        return;
+      }
+      const filtered = parsedLogData.filter((item) => {
+        return (
+          item.marketQuestion.toLowerCase().includes(q) ||
+          item.eventTitle.toLowerCase().includes(q) ||
+          item.keputusan.toLowerCase().includes(q) ||
+          item.alasan.toLowerCase().includes(q)
+        );
+      });
+      renderTableRows(filtered);
     });
-    renderTableRows(filtered);
-  });
+  }
 });
