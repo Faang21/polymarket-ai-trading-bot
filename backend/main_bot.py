@@ -20,8 +20,8 @@ CLOUDFLARE_KV_URL = os.environ.get("CLOUDFLARE_KV_URL", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PRIVATE_KEY_BURNER = os.environ.get("PRIVATE_KEY_BURNER", "")
 CSV_FILENAME = "catatan_simulasi_polymarket.csv"
-POLYMARKET_BTC_URL = "https://gamma-api.polymarket.com/events?closed=false&q=bitcoin&limit=15"
-POLYMARKET_FALLBACK_URL = "https://gamma-api.polymarket.com/events?closed=false&limit=15"
+POLYMARKET_BTC_URL = "https://gamma-api.polymarket.com/events?closed=false&q=btc%20up%20down&limit=15"
+POLYMARKET_FALLBACK_URL = "https://gamma-api.polymarket.com/events?closed=false&q=bitcoin&limit=15"
 
 
 def step_1_check_emergency_switch():
