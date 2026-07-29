@@ -2,4 +2,5 @@ google-genai
 requests
 pandas
 eth-account
-py-polymarket-client
+web3
+py-clob-client
