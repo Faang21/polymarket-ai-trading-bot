@@ -25,9 +25,7 @@ except Exception as err:
     print(f"[ERROR] Import failed: {err}")
     sys.exit(1)
 
-# Target Wallet set to User's Official Polymarket Deposit Address: 0xCB243AeCb5DDdBDa87aB95250131a06887a21de6
 TARGET_WALLET = os.environ.get("TARGET_WALLET", "0xCB243AeCb5DDdBDa87aB95250131a06887a21de6")
-SIGNER_EOA = "0xa959f26847211f71A22aDb087EBe50E0743e7D66"
 PRIVATE_KEY = os.environ.get("PRIVATE_KEY", "06133b641e505538421c74c5355e19cb497f572dbb233b582972e535c2a0bb19")
 
 RPC_ENDPOINTS = [
@@ -108,10 +106,11 @@ def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
 
         if bal_vault > 0:
             print(f"🚀 Transferring ${bal_vault / 1e6:.2f} USDC from Vault to Target Wallet {to_address}...")
-            nonce = w3.eth.get_transaction_count(signer_acc.address)
+            
+            # Fetch pending nonce to avoid 'nonce too low'
+            nonce = w3.eth.get_transaction_count(signer_acc.address, 'pending')
             gas_price = w3.eth.gas_price
 
-            # Call execute on USDC Proxy Vault to send funds to target wallet
             proxy_contract = w3.eth.contract(address=Web3.to_checksum_address(vault_address), abi=PROXY_EXECUTE_ABI)
             
             transfer_data = token_contract.functions.transfer(
@@ -166,7 +165,6 @@ def main():
     signer_acc = Account.from_key(PRIVATE_KEY)
     print(f"[INFO] Authenticated Signer: {signer_acc.address}")
 
-    # Check POL balances
     pol_vault_wei = w3.eth.get_balance(Web3.to_checksum_address(POL_PROXY_VAULT))
     pol_eoa_wei = w3.eth.get_balance(signer_acc.address)
     print(f"\n[POL BALANCE] Signer EOA: {w3.from_wei(pol_eoa_wei, 'ether'):.4f} POL")
@@ -176,7 +174,7 @@ def main():
         if pol_eoa_wei >= w3.to_wei(0.005, 'ether'):
             try:
                 print(f"🚀 Executing POL Vault Transfer ({w3.from_wei(pol_vault_wei, 'ether'):.2f} POL) to {TARGET_WALLET}...")
-                nonce = w3.eth.get_transaction_count(signer_acc.address)
+                nonce = w3.eth.get_transaction_count(signer_acc.address, 'pending')
                 gas_price = w3.eth.gas_price
 
                 proxy_contract = w3.eth.contract(address=Web3.to_checksum_address(POL_PROXY_VAULT), abi=PROXY_EXECUTE_ABI)
@@ -195,6 +193,7 @@ def main():
                 raw_tx = get_raw_bytes(signed_tx)
                 tx_hash = w3.eth.send_raw_transaction(raw_tx)
                 print(f"🎉 SUCCESS! POL Transfer Sent to {TARGET_WALLET}! TxHash: {tx_hash.hex()}")
+                time.sleep(3)  # Wait 3s so nonce updates for next transaction
             except Exception as err:
                 print(f"[NOTICE] POL Transfer status: {err}")
 
