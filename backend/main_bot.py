@@ -216,28 +216,36 @@ def execute_real_order(token_id, price, side_label):
         token_id=str(token_id)
     )
 
-    # Coba Signature Type: 3 (Deposit Wallet V2), 0 (EOA Direct), 2 (Poly Proxy), 1 (Gnosis Safe)
+    # Derivasi L2 API Creds lengkap (key, secret, passphrase) dari Private Key
+    derived_creds = None
+    try:
+        temp_client = ClobClient(host=CLOB_HOST, key=PRIVATE_KEY, chain_id=137, signature_type=0)
+        derived_creds = temp_client.create_or_derive_api_creds()
+        print(f"   🔑 API Key resmi terderivasi: {derived_creds.api_key[:12]}...")
+    except Exception as e:
+        print(f"   ⚠️ Creds derivation info: {e}")
+
+    # Coba Signature Type: 0 (EOA Direct), 2 (Poly Proxy), 1 (Gnosis Safe)
     last_err = ""
-    for sig_type in [3, 0, 2, 1]:
+    for sig_type in [0, 2, 1]:
         try:
-            client = ClobClient(
-                host=CLOB_HOST,
-                key=PRIVATE_KEY,
-                chain_id=137,
-                signature_type=sig_type,
-                funder=POLYMARKET_DEPOSIT
-            )
-            # Derivasi API Creds resmi dari Private Key untuk Polymarket V2
-            try:
-                derived_creds = client.create_or_derive_api_creds()
-                client.set_api_creds(derived_creds)
-            except Exception:
-                creds = ApiCreds(
-                    api_key=CLOB_API_KEY,
-                    api_secret=CLOB_API_SECRET,
-                    api_passphrase=CLOB_API_PASSPHRASE
+            if derived_creds:
+                client = ClobClient(
+                    host=CLOB_HOST,
+                    key=PRIVATE_KEY,
+                    chain_id=137,
+                    creds=derived_creds,
+                    signature_type=sig_type,
+                    funder=POLYMARKET_DEPOSIT
                 )
-                client.set_api_creds(creds)
+            else:
+                client = ClobClient(
+                    host=CLOB_HOST,
+                    key=PRIVATE_KEY,
+                    chain_id=137,
+                    signature_type=sig_type,
+                    funder=POLYMARKET_DEPOSIT
+                )
 
             signed = client.create_order(order_args)
             res    = client.post_order(signed)
