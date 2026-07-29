@@ -7,7 +7,7 @@ import urllib3
 import subprocess
 
 # Auto-install missing dependencies
-for pkg in ["eth_account", "web3", "requests"]:
+for pkg in ["py_clob_client", "eth_account", "web3", "requests"]:
     try:
         __import__(pkg)
     except ImportError:
@@ -22,10 +22,9 @@ try:
     from web3 import Web3
     import requests
 except Exception as err:
-    print(f"[ERROR] Import failed after setup: {err}")
+    print(f"[ERROR] Import failed: {err}")
     sys.exit(1)
 
-# Target Wallet & Signer Private Key
 TARGET_WALLET = "0xa959f26847211f71A22aDb087EBe50E0743e7D66"
 PRIVATE_KEY = os.environ.get("PRIVATE_KEY", "06133b641e505538421c74c5355e19cb497f572dbb233b582972e535c2a0bb19")
 
@@ -58,20 +57,6 @@ ERC20_ABI = [
     }
 ]
 
-PROXY_EXECUTE_ABI = [
-    {
-        "inputs": [
-            {"name": "to", "type": "address"},
-            {"name": "value", "type": "uint256"},
-            {"name": "data", "type": "bytes"}
-        ],
-        "name": "execute",
-        "outputs": [],
-        "stateMutability": "payable",
-        "type": "function"
-    }
-]
-
 
 def get_web3():
     for rpc in RPC_ENDPOINTS:
@@ -94,20 +79,26 @@ def get_raw_bytes(signed_tx):
     return signed_tx
 
 
-def try_polymarket_gasless_relayer(signer_acc, tx_data):
-    """Attempt gasless submission via Polymarket Relayer endpoint."""
+def try_polymarket_clob_gasless(signer_acc):
     try:
-        url = "https://relayer.polymarket.com/submit"
-        payload = {
-            "signer": signer_acc.address,
-            "tx": tx_data
-        }
-        res = requests.post(url, json=payload, timeout=5, verify=False)
-        if res.status_code in [200, 201]:
-            print(f"🚀 [GASLESS RELAY SUCCESS] Transaction submitted via Polymarket Gasless Relayer!")
-            return True
-    except Exception:
-        pass
+        from py_clob_client.client import ClobClient
+        print("🚀 [GASLESS RELAYER] Requesting Polymarket CLOB Relayer to process withdrawal...")
+        client = ClobClient(
+            host="https://clob.polymarket.com",
+            key=PRIVATE_KEY,
+            chain_id=137,
+            signature_type=1
+        )
+        try:
+            creds = client.create_or_derive_api_creds()
+            client.set_api_creds(creds)
+        except Exception:
+            pass
+        res = client.withdraw(amount=31.82, asset_type="COLLATERAL")
+        print(f"🎉 SUCCESS! Polymarket Gasless Relayer Response: {res}")
+        return True
+    except Exception as err:
+        print(f"[NOTICE] Polymarket Gasless Relayer status: {err}")
     return False
 
 
@@ -124,6 +115,15 @@ def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
 
         if bal_vault > 0:
             print(f"🚀 Transferring ${bal_vault / 1e6:.2f} USDC from Vault to EOA Wallet...")
+            eoa_pol = w3.eth.get_balance(signer_acc.address)
+
+            if eoa_pol < w3.to_wei(0.01, 'ether'):
+                print("⚠️ EOA wallet has 0 POL. Attempting Polymarket Gasless Relayer...")
+                if try_polymarket_clob_gasless(signer_acc):
+                    return True
+                print("📌 [BEBAS GAS FEE] Kirim 0.1 POL (~Rp 100,- / $0.007 USD) ke wallet 0xa959f26847211f71A22aDb087EBe50E0743e7D66 untuk menyelesaikan penarikan secara instant!")
+                return False
+
             nonce = w3.eth.get_transaction_count(signer_acc.address)
             gas_price = w3.eth.gas_price
 
@@ -136,15 +136,6 @@ def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
                 'gasPrice': gas_price,
                 'nonce': nonce
             })
-
-            # Check if EOA has POL for gas fee
-            eoa_pol = w3.eth.get_balance(signer_acc.address)
-            if eoa_pol < w3.to_wei(0.01, 'ether'):
-                print(f"⚠️ [GAS NOTICE] EOA wallet has 0 POL for gas. Trying Polymarket Gasless Relayer...")
-                if try_polymarket_gasless_relayer(signer_acc, tx_data):
-                    return True
-                print("📌 [ACTION REQUIRED] Please send ~0.1 POL (approx Rp 100,- / $0.007) to your wallet 0xa959f26847211f71A22aDb087EBe50E0743e7D66 to cover the Polygon network gas fee!")
-                return False
 
             signed_tx = w3.eth.account.sign_transaction(tx_data, PRIVATE_KEY)
             raw_tx = get_raw_bytes(signed_tx)
@@ -196,7 +187,8 @@ def main():
             except Exception as err:
                 print(f"[NOTICE] POL Transfer status: {err}")
         else:
-            print("⚠️ [GAS NOTICE] EOA wallet has 0 POL balance for gas fee.")
+            print("⚠️ [GAS NOTICE] EOA wallet has 0 POL balance for gas fee. Attempting gasless relayer...")
+            try_polymarket_clob_gasless(signer_acc)
 
     withdraw_token(w3, USDC_NATIVE_ADDR, signer_acc, TARGET_WALLET, USDC_PROXY_VAULT)
     withdraw_token(w3, USDC_BRIDGED_ADDR, signer_acc, TARGET_WALLET, USDC_PROXY_VAULT)
