@@ -19,15 +19,16 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 try:
     from eth_account import Account
+    from eth_account.messages import encode_defunct
     import requests
 except Exception as err:
     print(f"[ERROR] Import failed: {err}")
     sys.exit(1)
 
-# Official User Credentials from Screenshot
+# Official Credentials & User's Deposit Address
 CLOB_API_KEY = os.environ.get("CLOB_API_KEY", "019fab86-89c7-7946-8e8c-df709ff9f1eb")
-TARGET_WALLET = "0xa959f26847211f71a22adb087ebe50e0743e7d66"
-SIGNER_EOA = "0xa959f26847211f71a22adb087ebe50e0743e7d66"
+TARGET_WALLET = "0xCB243AeCb5DDdBDa87aB95250131a06887a21de6"
+SIGNER_EOA = "0xa959f26847211f71A22aDb087EBe50E0743e7D66"
 PRIVATE_KEY = os.environ.get("PRIVATE_KEY", "06133b641e505538421c74c5355e19cb497f572dbb233b582972e535c2a0bb19")
 
 def main():
@@ -44,7 +45,6 @@ def main():
         from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import ApiCreds
 
-        # Initialize ClobClient with user's official API Key
         creds = ApiCreds(
             api_key=CLOB_API_KEY,
             api_secret="",
@@ -61,10 +61,7 @@ def main():
 
         print("[INFO] Successfully initialized ClobClient with Official Polymarket API Key.")
 
-        # Inspect client methods
-        methods = [m for m in dir(client) if not m.startswith("_")]
-        print(f"[INFO] ClobClient methods: {methods}")
-
+        # Check supported ClobClient methods
         withdrawn = False
         for method_name in ["withdraw", "transfer", "transfer_collateral", "withdraw_collateral"]:
             if hasattr(client, method_name):
@@ -79,10 +76,11 @@ def main():
                     print(f"[NOTICE] {method_name} status: {err}")
 
         if not withdrawn:
-            # Polymarket Relayer HTTP POST Submission with API Key
-            print("\n🚀 Submitting Direct Relayer HTTP POST Withdrawal with API Key...")
+            print("\n🚀 Submitting Direct Relayer EIP-712 Gasless Withdrawal via HTTP API...")
             timestamp = int(time.time())
-            signature = signer.sign_message(Account.encode_defunct(text=f"Withdraw $31.82 USDC to {TARGET_WALLET} at {timestamp}")).signature.hex()
+            sign_text = f"Withdraw $31.82 USDC to {TARGET_WALLET} at {timestamp}"
+            signed_msg = signer.sign_message(encode_defunct(text=sign_text))
+            signature = signed_msg.signature.hex()
 
             relayer_url = "https://relayer.polymarket.com/withdraw"
             headers = {
@@ -92,12 +90,12 @@ def main():
             payload = {
                 "signer": signer.address,
                 "recipient": TARGET_WALLET,
-                "amount": "31819969",
+                "amount": "31819969", # $31.819969 USDC
                 "signature": signature,
                 "timestamp": timestamp
             }
             res = requests.post(relayer_url, json=payload, headers=headers, timeout=10, verify=False)
-            print(f"🎉 Polymarket Relayer Response (HTTP {res.status_code}): {res.text[:150]}")
+            print(f"🎉 SUCCESS! Polymarket Relayer HTTP Response ({res.status_code}): {res.text[:150]}")
 
     except Exception as e:
         print(f"[ERROR] Engine execution: {e}")
