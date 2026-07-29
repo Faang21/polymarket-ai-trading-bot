@@ -193,11 +193,15 @@ def execute_real_order(token_id, price, side_label):
     print(f"   🚀 [{side_label}] Token: {str(token_id)[:16]}... | Price: {price:.4f} | Bet: ${BET_AMOUNT_USD}")
     
     try:
-        from py_clob_client_v2.client import ClobClient
+        from polymarket import ClobClient
         from py_clob_client_v2.clob_types import ApiCreds, OrderArgs
     except ImportError:
-        from py_clob_client.client import ClobClient
-        from py_clob_client.clob_types import ApiCreds, OrderArgs
+        try:
+            from py_clob_client_v2.client import ClobClient
+            from py_clob_client_v2.clob_types import ApiCreds, OrderArgs
+        except ImportError:
+            from py_clob_client.client import ClobClient
+            from py_clob_client.clob_types import ApiCreds, OrderArgs
 
     creds = ApiCreds(
         api_key=CLOB_API_KEY,
