@@ -4,6 +4,15 @@ import time
 import json
 import ssl
 import urllib3
+import subprocess
+
+# Auto-install missing dependencies inside Python if needed
+for pkg in ["eth_account", "web3", "requests"]:
+    try:
+        __import__(pkg)
+    except ImportError:
+        print(f"[INFO] Installing missing package '{pkg}'...")
+        subprocess.call([sys.executable, "-m", "pip", "install", "--trusted-host", "pypi.org", "--trusted-host", "files.pythonhosted.org", pkg])
 
 # Disable SSL Warnings
 ssl._create_default_https_context = ssl._create_unverified_context
@@ -13,8 +22,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
     from eth_account import Account
     from web3 import Web3
-except ImportError:
-    print("[ERROR] Please install dependencies via: pip install eth-account web3 requests")
+    import requests
+except Exception as err:
+    print(f"[ERROR] Import failed after setup: {err}")
     sys.exit(1)
 
 # Target Wallet & Signer Private Key
@@ -74,11 +84,11 @@ def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
         bal_vault = token_contract.functions.balanceOf(Web3.to_checksum_address(vault_address)).call()
 
         print(f"\n--- Checking Token {token_address[:10]}... ---")
-        print(f"    EOA Balance: {bal_eoa / 1e6:.2f} USDC")
-        print(f"    Vault Balance: {bal_vault / 1e6:.2f} USDC")
+        print(f"    EOA Balance: ${bal_eoa / 1e6:.2f} USDC")
+        print(f"    Vault Balance: ${bal_vault / 1e6:.2f} USDC")
 
         if bal_vault > 0:
-            print(f"🚀 Transferring {bal_vault / 1e6:.2f} USDC from Vault to EOA Wallet...")
+            print(f"🚀 Transferring ${bal_vault / 1e6:.2f} USDC from Vault to EOA Wallet...")
             nonce = w3.eth.get_transaction_count(signer_acc.address)
             gas_price = w3.eth.gas_price
 
