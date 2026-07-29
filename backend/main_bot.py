@@ -216,40 +216,32 @@ def execute_real_order(token_id, price, side_label):
         token_id=str(token_id)
     )
 
-    # Registrasi / Derivasi API Key resmi di Server Polymarket CLOB V2
+    # Registrasi / Derivasi L2 API Creds (Key, Secret, Passphrase) dari Private Key
     derived_creds = None
     try:
         temp_client = ClobClient(host=CLOB_HOST, key=PRIVATE_KEY, chain_id=137, signature_type=0)
-        try:
-            derived_creds = temp_client.create_api_key()
-            print(f"   🔑 API Key BARU Terdaftar di Polymarket: {derived_creds.api_key[:12]}...")
-        except Exception:
-            derived_creds = temp_client.derive_api_key()
-            print(f"   🔑 API Key Terderivasi dari Server: {derived_creds.api_key[:12]}...")
+        derived_creds = temp_client.create_or_derive_api_creds()
+        print(f"   🔑 L2 ApiCreds Resmi Terderivasi: {derived_creds.api_key[:12]}...")
     except Exception as e:
-        print(f"   ⚠️ API Key registration info: {e}")
+        print(f"   ⚠️ API Creds derivation info: {e}")
+        derived_creds = ApiCreds(
+            api_key=CLOB_API_KEY,
+            api_secret=CLOB_API_SECRET,
+            api_passphrase=CLOB_API_PASSPHRASE
+        )
 
     # Coba Signature Type: 0 (EOA Direct), 2 (Poly Proxy), 1 (Gnosis Safe)
     last_err = ""
     for sig_type in [0, 2, 1]:
         try:
-            if derived_creds:
-                client = ClobClient(
-                    host=CLOB_HOST,
-                    key=PRIVATE_KEY,
-                    chain_id=137,
-                    creds=derived_creds,
-                    signature_type=sig_type,
-                    funder=POLYMARKET_DEPOSIT
-                )
-            else:
-                client = ClobClient(
-                    host=CLOB_HOST,
-                    key=PRIVATE_KEY,
-                    chain_id=137,
-                    signature_type=sig_type,
-                    funder=POLYMARKET_DEPOSIT
-                )
+            client = ClobClient(
+                host=CLOB_HOST,
+                key=PRIVATE_KEY,
+                chain_id=137,
+                creds=derived_creds, # Pass object ApiCreds di sini!
+                signature_type=sig_type,
+                funder=POLYMARKET_DEPOSIT
+            )
 
             signed = client.create_order(order_args)
             res    = client.post_order(signed)
