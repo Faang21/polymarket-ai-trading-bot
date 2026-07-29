@@ -216,9 +216,9 @@ def execute_real_order(token_id, price, side_label):
         token_id=str(token_id)
     )
 
-    # Derivasi & Eksekusi L2 API Creds Khusus Deposit Wallet Flow (sig_type=2 & funder)
+    # Derivasi & Eksekusi L2 API Creds Khusus Deposit Wallet Flow (sig_type=3, 2, 1, 0)
     last_err = ""
-    for sig_type in [2, 0, 1]:
+    for sig_type in [3, 2, 1, 0]:
         try:
             temp_client = ClobClient(
                 host=CLOB_HOST,
