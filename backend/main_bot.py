@@ -216,35 +216,25 @@ def execute_real_order(token_id, price, side_label):
         token_id=str(token_id)
     )
 
-    # Derivasi & Eksekusi L2 API Creds Khusus Deposit Wallet Flow (sig_type=3, 2, 1, 0)
-    last_err = ""
-    for sig_type in [3, 2, 1, 0]:
-        try:
-            temp_client = ClobClient(
-                host=CLOB_HOST,
-                key=PRIVATE_KEY,
-                chain_id=137,
-                signature_type=sig_type,
-                funder=POLYMARKET_DEPOSIT
-            )
-            derived_creds = None
-            if hasattr(temp_client, "create_or_derive_api_key"):
-                derived_creds = temp_client.create_or_derive_api_key()
-            elif hasattr(temp_client, "create_or_derive_api_creds"):
-                derived_creds = temp_client.create_or_derive_api_creds()
-            
-            if derived_creds:
-                print(f"   🔑 Deposit Wallet ApiCreds (SigType={sig_type}): {derived_creds.api_key[:12]}...")
+    # Gunakan L2 Credentials langsung dari config.py
+    api_creds = ApiCreds(
+        api_key=CLOB_API_KEY,
+        api_secret=CLOB_API_SECRET,
+        api_passphrase=CLOB_API_PASSPHRASE
+    )
 
+    # Coba sig_type: 0 (EOA), 2 (Deposit Wallet), 1 (Gnosis)
+    last_err = ""
+    for sig_type in [0, 2, 1]:
+        try:
             client = ClobClient(
                 host=CLOB_HOST,
                 key=PRIVATE_KEY,
                 chain_id=137,
-                creds=derived_creds if derived_creds else ApiCreds(api_key=CLOB_API_KEY, api_secret=CLOB_API_SECRET, api_passphrase=CLOB_API_PASSPHRASE),
+                creds=api_creds,
                 signature_type=sig_type,
                 funder=POLYMARKET_DEPOSIT
             )
-
             signed = client.create_order(order_args)
             res    = client.post_order(signed)
             cycle_trades += 1
@@ -255,7 +245,7 @@ def execute_real_order(token_id, price, side_label):
         except Exception as err:
             last_err = str(err)
             if "maker address not allowed" in last_err or "Unauthorized" in last_err or "401" in last_err or "400" in last_err or "invalid order version" in last_err:
-                continue # Coba sig_type berikutnya
+                continue
             else:
                 break
 
