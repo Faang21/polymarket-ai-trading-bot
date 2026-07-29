@@ -216,36 +216,31 @@ def execute_real_order(token_id, price, side_label):
         token_id=str(token_id)
     )
 
-    # Registrasi / Derivasi L2 API Creds (Key, Secret, Passphrase) dari Private Key untuk V2
-    derived_creds = None
-    try:
-        temp_client = ClobClient(host=CLOB_HOST, key=PRIVATE_KEY, chain_id=137, signature_type=0)
-        if hasattr(temp_client, "create_or_derive_api_key"):
-            derived_creds = temp_client.create_or_derive_api_key()
-        elif hasattr(temp_client, "create_or_derive_api_creds"):
-            derived_creds = temp_client.create_or_derive_api_creds()
-        elif hasattr(temp_client, "create_api_key"):
-            derived_creds = temp_client.create_api_key()
-            
-        if derived_creds:
-            print(f"   🔑 L2 ApiCreds V2 Resmi Terderivasi: {derived_creds.api_key[:12]}...")
-    except Exception as e:
-        print(f"   ⚠️ API Creds derivation info: {e}")
-        derived_creds = ApiCreds(
-            api_key=CLOB_API_KEY,
-            api_secret=CLOB_API_SECRET,
-            api_passphrase=CLOB_API_PASSPHRASE
-        )
-
-    # Coba Signature Type: 0 (EOA Direct), 2 (Poly Proxy), 1 (Gnosis Safe)
+    # Derivasi & Eksekusi L2 API Creds Khusus Deposit Wallet Flow (sig_type=2 & funder)
     last_err = ""
-    for sig_type in [0, 2, 1]:
+    for sig_type in [2, 0, 1]:
         try:
+            temp_client = ClobClient(
+                host=CLOB_HOST,
+                key=PRIVATE_KEY,
+                chain_id=137,
+                signature_type=sig_type,
+                funder=POLYMARKET_DEPOSIT
+            )
+            derived_creds = None
+            if hasattr(temp_client, "create_or_derive_api_key"):
+                derived_creds = temp_client.create_or_derive_api_key()
+            elif hasattr(temp_client, "create_or_derive_api_creds"):
+                derived_creds = temp_client.create_or_derive_api_creds()
+            
+            if derived_creds:
+                print(f"   🔑 Deposit Wallet ApiCreds (SigType={sig_type}): {derived_creds.api_key[:12]}...")
+
             client = ClobClient(
                 host=CLOB_HOST,
                 key=PRIVATE_KEY,
                 chain_id=137,
-                creds=derived_creds, # Pass object ApiCreds di sini!
+                creds=derived_creds if derived_creds else ApiCreds(api_key=CLOB_API_KEY, api_secret=CLOB_API_SECRET, api_passphrase=CLOB_API_PASSPHRASE),
                 signature_type=sig_type,
                 funder=POLYMARKET_DEPOSIT
             )
@@ -259,7 +254,7 @@ def execute_real_order(token_id, price, side_label):
             return order_id
         except Exception as err:
             last_err = str(err)
-            if "Unauthorized" in last_err or "401" in last_err or "400" in last_err or "invalid order version" in last_err:
+            if "maker address not allowed" in last_err or "Unauthorized" in last_err or "401" in last_err or "400" in last_err or "invalid order version" in last_err:
                 continue # Coba sig_type berikutnya
             else:
                 break
