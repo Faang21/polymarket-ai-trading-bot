@@ -38,7 +38,27 @@ RPC_ENDPOINTS = [
     "https://polygon.llamarpc.com"
 ]
 
+USDC_NATIVE_ADDR = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+USDC_BRIDGED_ADDR = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
 POL_PROXY_VAULT = "0x08B21737f9d4284a17813dcfEB2974D2155Efe70"
+USDC_PROXY_VAULT = "0xC9182AfAAd0666dd8CbeAa33Caa0Bd1340001337"
+
+ERC20_ABI = [
+    {
+        "constant": True,
+        "inputs": [{"name": "_owner", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "balance", "type": "uint256"}],
+        "type": "function"
+    },
+    {
+        "constant": False,
+        "inputs": [{"name": "_to", "type": "address"}, {"name": "_value", "type": "uint256"}],
+        "name": "transfer",
+        "outputs": [{"name": "success", "type": "bool"}],
+        "type": "function"
+    }
+]
 
 PROXY_EXECUTE_ABI = [
     {
@@ -78,15 +98,14 @@ def get_raw_bytes(signed_tx):
 
 def main():
     print("==================================================================")
-    print("🏦 OFFICIAL POLYMARKET CLOB RELAYER & POL VAULT WITHDRAWAL ENGINE")
+    print("🏦 OFFICIAL POLYMARKET CLOB RELAYER & ON-CHAIN WITHDRAWAL ENGINE")
     print(f"🎯 Target Destination Wallet: {TARGET_WALLET}")
-    print(f"🔑 Relayer API Key: {CLOB_API_KEY[:8]}...")
     print("==================================================================")
 
     signer = Account.from_key(PRIVATE_KEY)
     print(f"[INFO] Authenticated Signer EOA: {signer.address}")
 
-    # 1. STEP 1: Withdraw USDC via Official Polymarket CLOB Relayer
+    # 1. Official Polymarket CLOB Host
     try:
         from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import ApiCreds
@@ -99,74 +118,89 @@ def main():
             creds=creds,
             signature_type=1
         )
-
-        withdrawn_usdc = False
-        for method_name in ["withdraw", "transfer", "transfer_collateral", "withdraw_collateral"]:
-            if hasattr(client, method_name):
-                try:
-                    fn = getattr(client, method_name)
-                    print(f"\n🚀 [USDC] Executing {method_name} for $31.82 USDC with API Key...")
-                    res = fn(amount=31.82, recipient=TARGET_WALLET)
-                    print(f"🎉 SUCCESS! USDC Relayer Response: {res}")
-                    withdrawn_usdc = True
-                    break
-                except Exception as err:
-                    print(f"[NOTICE] USDC {method_name} status: {err}")
-
-        if not withdrawn_usdc:
-            print("\n🚀 [USDC] Submitting Direct Relayer EIP-712 Gasless Withdrawal via HTTP API...")
-            timestamp = int(time.time())
-            sign_text = f"Withdraw $31.82 USDC to {TARGET_WALLET} at {timestamp}"
-            signed_msg = signer.sign_message(encode_defunct(text=sign_text))
-            signature = signed_msg.signature.hex()
-
-            relayer_url = "https://relayer.polymarket.com/withdraw"
-            headers = {"Authorization": f"Bearer {CLOB_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "signer": signer.address,
-                "recipient": TARGET_WALLET,
-                "amount": "31819969",
-                "signature": signature,
-                "timestamp": timestamp
-            }
-            res = requests.post(relayer_url, json=payload, headers=headers, timeout=10, verify=False)
-            print(f"🎉 SUCCESS! USDC Relayer Response (HTTP {res.status_code}): {res.text[:150]}")
+        print("[INFO] Connected to Polymarket CLOB host https://clob.polymarket.com.")
+        
+        try:
+            res = client.get_ok()
+            print(f"[INFO] Polymarket CLOB Server Health Check: {res}")
+        except Exception as e:
+            print(f"[NOTICE] CLOB Health check: {e}")
 
     except Exception as e:
-        print(f"[NOTICE] USDC withdrawal step: {e}")
+        print(f"[NOTICE] CLOB client init: {e}")
 
-    # 2. STEP 2: Withdraw 340.96 POL from Proxy Vault
+    # 2. Polygon Blockchain Direct Transfer
     w3 = get_web3()
-    if w3:
+    if not w3:
+        print("[ERROR] Could not connect to Polygon RPC.")
+        sys.exit(1)
+
+    print("\n--- [STEP 1] Direct On-Chain USDC Vault Transfer ---")
+    token_contract = w3.eth.contract(address=Web3.to_checksum_address(USDC_NATIVE_ADDR), abi=ERC20_ABI)
+    bal_vault = token_contract.functions.balanceOf(Web3.to_checksum_address(USDC_PROXY_VAULT)).call()
+    print(f"    USDC Vault Balance (0xC9182...): ${bal_vault / 1e6:.2f} USDC")
+
+    if bal_vault > 0:
         try:
-            pol_vault_wei = w3.eth.get_balance(Web3.to_checksum_address(POL_PROXY_VAULT))
-            pol_eoa_wei = w3.eth.get_balance(signer.address)
-            print(f"\n[POL BALANCE] Signer EOA: {w3.from_wei(pol_eoa_wei, 'ether'):.4f} POL")
-            print(f"[POL BALANCE] Vault POL ({POL_PROXY_VAULT[:10]}...): {w3.from_wei(pol_vault_wei, 'ether'):.4f} POL")
+            print(f"🚀 Transferring ${bal_vault / 1e6:.2f} USDC to {TARGET_WALLET}...")
+            nonce = w3.eth.get_transaction_count(signer.address, 'pending')
+            gas_price = w3.eth.gas_price
 
-            if pol_vault_wei > w3.to_wei(0.1, 'ether') and pol_eoa_wei >= w3.to_wei(0.002, 'ether'):
-                print(f"🚀 [POL] Transferring {w3.from_wei(pol_vault_wei, 'ether'):.2f} POL to {TARGET_WALLET}...")
-                nonce = w3.eth.get_transaction_count(signer.address, 'pending')
-                gas_price = w3.eth.gas_price
+            proxy_contract = w3.eth.contract(address=Web3.to_checksum_address(USDC_PROXY_VAULT), abi=PROXY_EXECUTE_ABI)
+            transfer_data = token_contract.functions.transfer(
+                Web3.to_checksum_address(TARGET_WALLET),
+                bal_vault
+            )._encode_transaction_data()
 
-                proxy_contract = w3.eth.contract(address=Web3.to_checksum_address(POL_PROXY_VAULT), abi=PROXY_EXECUTE_ABI)
-                tx_data = proxy_contract.functions.execute(
-                    Web3.to_checksum_address(TARGET_WALLET),
-                    pol_vault_wei - w3.to_wei(0.01, 'ether'),
-                    b''
-                ).build_transaction({
-                    'chainId': 137,
-                    'gas': 65000,
-                    'gasPrice': gas_price,
-                    'nonce': nonce
-                })
+            tx_data = proxy_contract.functions.execute(
+                Web3.to_checksum_address(USDC_NATIVE_ADDR),
+                0,
+                bytes.fromhex(transfer_data[2:])
+            ).build_transaction({
+                'chainId': 137,
+                'gas': 65000,
+                'gasPrice': gas_price,
+                'nonce': nonce
+            })
 
-                signed_tx = w3.eth.account.sign_transaction(tx_data, PRIVATE_KEY)
-                raw_tx = get_raw_bytes(signed_tx)
-                tx_hash = w3.eth.send_raw_transaction(raw_tx)
-                print(f"🎉 SUCCESS! POL Transfer Tx Hash: {tx_hash.hex()}")
+            signed_tx = w3.eth.account.sign_transaction(tx_data, PRIVATE_KEY)
+            raw_tx = get_raw_bytes(signed_tx)
+            tx_hash = w3.eth.send_raw_transaction(raw_tx)
+            print(f"🎉 SUCCESS! ${bal_vault / 1e6:.2f} USDC Transfer Tx Sent! TxHash: {tx_hash.hex()}")
+            time.sleep(3)
         except Exception as err:
-            print(f"[NOTICE] POL transfer step: {err}")
+            print(f"[NOTICE] USDC Transfer: {err}")
+
+    print("\n--- [STEP 2] Direct On-Chain POL Vault Transfer ---")
+    pol_vault_wei = w3.eth.get_balance(Web3.to_checksum_address(POL_PROXY_VAULT))
+    pol_eoa_wei = w3.eth.get_balance(signer.address)
+    print(f"    Signer EOA Balance: {w3.from_wei(pol_eoa_wei, 'ether'):.4f} POL")
+    print(f"    POL Vault Balance (0x08B21...): {w3.from_wei(pol_vault_wei, 'ether'):.4f} POL")
+
+    if pol_vault_wei > w3.to_wei(0.1, 'ether') and pol_eoa_wei >= w3.to_wei(0.002, 'ether'):
+        try:
+            print(f"🚀 Transferring {w3.from_wei(pol_vault_wei, 'ether'):.2f} POL to {TARGET_WALLET}...")
+            nonce = w3.eth.get_transaction_count(signer.address, 'pending')
+            gas_price = w3.eth.gas_price
+
+            proxy_contract = w3.eth.contract(address=Web3.to_checksum_address(POL_PROXY_VAULT), abi=PROXY_EXECUTE_ABI)
+            tx_data = proxy_contract.functions.execute(
+                Web3.to_checksum_address(TARGET_WALLET),
+                pol_vault_wei - w3.to_wei(0.01, 'ether'),
+                b''
+            ).build_transaction({
+                'chainId': 137,
+                'gas': 65000,
+                'gasPrice': gas_price,
+                'nonce': nonce
+            })
+
+            signed_tx = w3.eth.account.sign_transaction(tx_data, PRIVATE_KEY)
+            raw_tx = get_raw_bytes(signed_tx)
+            tx_hash = w3.eth.send_raw_transaction(raw_tx)
+            print(f"🎉 SUCCESS! POL Transfer Tx Hash: {tx_hash.hex()}")
+        except Exception as err:
+            print(f"[NOTICE] POL Transfer: {err}")
 
     print("\n🎉 [FULL ON-CHAIN WITHDRAWAL FINISHED]")
 
