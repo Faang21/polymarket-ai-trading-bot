@@ -15,8 +15,9 @@ import subprocess
 import traceback
 from datetime import datetime
 
-# Path ke main_bot.py
-BOT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main_bot.py")
+# Path ke main_bot.py dan backend dir
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+BOT_SCRIPT = os.path.join(BACKEND_DIR, "main_bot.py")
 INTERVAL_SECONDS = 300  # 5 menit
 MAX_CONSECUTIVE_ERRORS = 10
 
@@ -41,7 +42,8 @@ while True:
         result = subprocess.run(
             [sys.executable, BOT_SCRIPT],
             check=False,
-            timeout=240  # Max 4 menit per cycle, lalu timeout
+            timeout=240,
+            cwd=BACKEND_DIR  # Pastikan config.py ditemukan
         )
 
         if result.returncode == 0:
