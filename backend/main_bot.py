@@ -212,7 +212,6 @@ def execute_real_order(token_id, price, side_label):
         token_id=str(token_id)
     )
 
-    # Coba Signature Type: 0 (EOA Direct Private Key), 2 (Poly Proxy), 1 (Gnosis Safe)
     last_err = ""
     for sig_type in [0, 2, 1]:
         try:
@@ -220,10 +219,21 @@ def execute_real_order(token_id, price, side_label):
                 host=CLOB_HOST,
                 key=PRIVATE_KEY,
                 chain_id=137,
-                creds=creds,
                 signature_type=sig_type,
                 funder=POLYMARKET_DEPOSIT
             )
+            # Derivasi API Creds otomatis dari Private Key untuk Polymarket V2
+            try:
+                derived_creds = client.create_or_derive_api_creds()
+                client.set_api_creds(derived_creds)
+            except Exception:
+                creds = ApiCreds(
+                    api_key=CLOB_API_KEY,
+                    api_secret=CLOB_API_SECRET,
+                    api_passphrase=CLOB_API_PASSPHRASE
+                )
+                client.set_api_creds(creds)
+
             signed = client.create_order(order_args)
             res    = client.post_order(signed)
             cycle_trades += 1
@@ -233,7 +243,7 @@ def execute_real_order(token_id, price, side_label):
             return order_id
         except Exception as err:
             last_err = str(err)
-            if "invalid order version" in last_err or "400" in last_err:
+            if "Unauthorized" in last_err or "401" in last_err or "400" in last_err or "invalid order version" in last_err:
                 continue # Coba sig_type berikutnya
             else:
                 break
