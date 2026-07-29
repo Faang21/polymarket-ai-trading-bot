@@ -23,8 +23,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let equityChartInstance = null;
 
   const DEFAULT_WORKER_URL = "https://bot-control.aangcrypto21.workers.dev";
-  const GITHUB_RAW_CSV_URL = "https://raw.githubusercontent.com/Faang21/polymarket-ai-trading-bot/main/catatan_simulasi_polymarket.csv";
-  const DEFAULT_WALLET = "0xa959f26847211f71A22aDb087EBe50E0743e7D66";
+  const GITHUB_RAW_CSV_URL = "https://raw.githubusercontent.com/Faang21/polymarket-ai-trading-bot/main/catatan_trading_real.csv";
+  const DEFAULT_WALLET = "0x65f465f0cd1c08e6740bd2e0b512c675668e51dd";
 
   // 1. Initial Setup: Load Saved URLs and Wallet
   const savedUrl = localStorage.getItem("POLYMARKET_WORKER_URL") || DEFAULT_WORKER_URL;
@@ -218,45 +218,42 @@ document.addEventListener("DOMContentLoaded", () => {
     if (usdcBalanceText) usdcBalanceText.innerText = "Loading...";
     if (polBalanceText) polBalanceText.innerText = "Loading...";
 
-    const POL_PROXY_VAULT = "0x08B21737f9d4284a17813dcfEB2974D2155Efe70";
-    const USDC_PROXY_VAULT = "0xC9182AfAAd0666dd8CbeAa33Caa0Bd1340001337";
+    const POLYMARKET_DEPOSIT = "0x998DAe6C3Eb18ecDD9C985CA4975051046F18EF0";
+    const USDC_CONTRACT = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359";
 
     try {
-      // 1. Fetch POL (MATIC) native balance from EOA & Proxy Vault
+      // 1. Fetch POL (MATIC) native balance from EOA wallet
       let totalPol = 0;
       const hexPolEOA = await callPolygonRpc({
         jsonrpc: "2.0", method: "eth_getBalance", params: [address, "latest"], id: 1
       });
       if (hexPolEOA && hexPolEOA !== "0x0") totalPol += Number(BigInt(hexPolEOA)) / 1e18;
 
-      const hexPolProxy = await callPolygonRpc({
-        jsonrpc: "2.0", method: "eth_getBalance", params: [POL_PROXY_VAULT, "latest"], id: 2
+      const hexPolDeposit = await callPolygonRpc({
+        jsonrpc: "2.0", method: "eth_getBalance", params: [POLYMARKET_DEPOSIT, "latest"], id: 2
       });
-      if (hexPolProxy && hexPolProxy !== "0x0") totalPol += Number(BigInt(hexPolProxy)) / 1e18;
+      if (hexPolDeposit && hexPolDeposit !== "0x0") totalPol += Number(BigInt(hexPolDeposit)) / 1e18;
 
-      if (totalPol < 1.0) totalPol = 74.175;
-      if (polBalanceText) polBalanceText.innerText = `${totalPol.toFixed(2)} POL`;
+      if (polBalanceText) polBalanceText.innerText = `${totalPol.toFixed(4)} POL`;
 
-      // 2. Fetch Native USDC & Bridged USDC.e from EOA & USDC Proxy Vault
+      // 2. Fetch USDC balance from EOA & Polymarket Deposit Address
       const cleanAddrEOA = address.substring(2).padStart(64, "0");
-      const cleanAddrProxy = USDC_PROXY_VAULT.substring(2).padStart(64, "0");
+      const cleanAddrDeposit = POLYMARKET_DEPOSIT.substring(2).padStart(64, "0");
       let totalUsdcVal = 0;
 
-      // Native USDC on EOA & Proxy Vault
-      const hexUsdcNative = await callPolygonRpc({
+      // USDC on EOA wallet
+      const hexUsdcEOA = await callPolygonRpc({
         jsonrpc: "2.0", method: "eth_call",
-        params: [{ to: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", data: "0x70a08231" + cleanAddrProxy }, "latest"], id: 3
+        params: [{ to: USDC_CONTRACT, data: "0x70a08231" + cleanAddrEOA }, "latest"], id: 3
       });
-      if (hexUsdcNative && hexUsdcNative !== "0x") totalUsdcVal += Number(BigInt(hexUsdcNative)) / 1e6;
+      if (hexUsdcEOA && hexUsdcEOA !== "0x") totalUsdcVal += Number(BigInt(hexUsdcEOA)) / 1e6;
 
-      const hexUsdcBridged = await callPolygonRpc({
+      // USDC on Polymarket Deposit Address
+      const hexUsdcDeposit = await callPolygonRpc({
         jsonrpc: "2.0", method: "eth_call",
-        params: [{ to: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", data: "0x70a08231" + cleanAddrProxy }, "latest"], id: 4
+        params: [{ to: USDC_CONTRACT, data: "0x70a08231" + cleanAddrDeposit }, "latest"], id: 4
       });
-      if (hexUsdcBridged && hexUsdcBridged !== "0x") totalUsdcVal += Number(BigInt(hexUsdcBridged)) / 1e6;
-
-      // Fallback to exact confirmed PolygonScan deposit amount
-      if (totalUsdcVal < 1.0) totalUsdcVal = 29.84;
+      if (hexUsdcDeposit && hexUsdcDeposit !== "0x") totalUsdcVal += Number(BigInt(hexUsdcDeposit)) / 1e6;
 
       const formattedUsdc = totalUsdcVal.toFixed(2);
       if (usdcBalanceText) usdcBalanceText.innerText = `$${formattedUsdc}`;
@@ -264,9 +261,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     } catch (err) {
       console.log("Error fetching Polygon RPC balances:", err);
-      if (usdcBalanceText) usdcBalanceText.innerText = "$29.84";
-      if (polBalanceText) polBalanceText.innerText = "74.17 POL";
-      renderEquityChart("29.84");
+      if (usdcBalanceText) usdcBalanceText.innerText = "$0.00";
+      if (polBalanceText) polBalanceText.innerText = "0.0000 POL";
+      renderEquityChart("0");
     }
   }
 
@@ -363,27 +360,25 @@ document.addEventListener("DOMContentLoaded", () => {
   function parseAndRenderCsv(csvText) {
     const lines = csvText.split("\n").filter((l) => l.trim().length > 0);
     if (lines.length <= 1) {
-      if (logTableBody) logTableBody.innerHTML = `<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">File CSV kosong atau tidak memiliki data.</td></tr>`;
+      if (logTableBody) logTableBody.innerHTML = `<tr><td colspan="6" class="px-4 py-6 text-center text-slate-500">Belum ada data trading. Bot belum dijalankan di VPS.</td></tr>`;
       updateChartsAndStats([]);
       return;
     }
 
     parsedLogData = [];
-
+    // New CSV format: Timestamp,Market,TokenID,Price,Side,BetUSD,OrderID,Alasan
     for (let i = lines.length - 1; i >= 1; i--) {
       const rowValues = parseCsvLine(lines[i]);
-      if (rowValues.length >= 7) {
+      if (rowValues.length >= 5) {
         parsedLogData.push({
-          timestamp: rowValues[0] || "",
-          eventTitle: rowValues[1] || "",
-          marketQuestion: rowValues[2] || "",
-          tokenYes: rowValues[3] || "",
-          tokenNo: rowValues[4] || "",
-          priceYes: rowValues[5] || "",
-          priceNo: rowValues[6] || "",
-          keputusan: rowValues[7] || "HOLD",
-          alasan: rowValues[8] || "",
-          volume: rowValues[9] || "",
+          timestamp:  rowValues[0] || "",
+          market:     rowValues[1] || "",
+          tokenId:    rowValues[2] || "",
+          price:      rowValues[3] || "",
+          side:       rowValues[4] || "HOLD",
+          betUsd:     rowValues[5] || "0",
+          orderId:    rowValues[6] || "",
+          alasan:     rowValues[7] || "",
         });
       }
     }
@@ -396,43 +391,43 @@ document.addEventListener("DOMContentLoaded", () => {
     let buyYesCount = 0;
     let buyNoCount = 0;
     let holdCount = 0;
-    let totalPnlUsd = 0;
+    let totalBetUsd = 0;
+    let estimatedPnl = 0;
 
     data.forEach((item) => {
-      const kep = (item.keputusan || "").toUpperCase();
-      const pYes = parseFloat(item.priceYes) || 0.5;
-      const pNo = parseFloat(item.priceNo) || 0.5;
+      const side = (item.side || "").toUpperCase();
+      const price = parseFloat(item.price) || 0.5;
+      const bet = parseFloat(item.betUsd) || 0;
 
-      if (kep === "BUY_YES") {
+      if (side === "BUY_YES") {
         buyYesCount++;
-        // Profit calculation based on $1 bet size: (1 / entry_price - 1) * $1
-        if (pYes > 0 && pYes < 1) {
-          totalPnlUsd += (1.0 / pYes - 1.0) * 0.4; // 40% estimated win rate simulation
-        }
-      } else if (kep === "BUY_NO") {
+        totalBetUsd += bet;
+        if (price > 0 && price < 1) estimatedPnl += (1.0 / price - 1.0) * bet * 0.4;
+      } else if (side === "BUY_NO") {
         buyNoCount++;
-        if (pNo > 0 && pNo < 1) {
-          totalPnlUsd += (1.0 / pNo - 1.0) * 0.4;
-        }
+        totalBetUsd += bet;
+        if (price > 0 && price < 1) estimatedPnl += (1.0 / price - 1.0) * bet * 0.4;
       } else {
         holdCount++;
       }
     });
 
     const elTotal = document.getElementById("statTotal");
-    const elYes = document.getElementById("statBuyYes");
-    const elNo = document.getElementById("statBuyNo");
-    const elHold = document.getElementById("statHold");
-    const elPnl = document.getElementById("statPnl");
+    const elYes   = document.getElementById("statBuyYes");
+    const elNo    = document.getElementById("statBuyNo");
+    const elHold  = document.getElementById("statHold");
+    const elPnl   = document.getElementById("statPnl");
 
     if (elTotal) elTotal.innerText = data.length;
-    if (elYes) elYes.innerText = buyYesCount;
-    if (elNo) elNo.innerText = buyNoCount;
-    if (elHold) elHold.innerText = holdCount;
+    if (elYes)   elYes.innerText   = buyYesCount;
+    if (elNo)    elNo.innerText    = buyNoCount;
+    if (elHold)  elHold.innerText  = holdCount;
     if (elPnl) {
-      const sign = totalPnlUsd >= 0 ? "+" : "";
-      elPnl.innerText = `${sign}$${totalPnlUsd.toFixed(2)}`;
-      elPnl.className = totalPnlUsd >= 0 ? "text-xl font-black text-emerald-400 mt-1" : "text-xl font-black text-rose-400 mt-1";
+      const sign = estimatedPnl >= 0 ? "+" : "";
+      elPnl.innerText = `${sign}$${estimatedPnl.toFixed(2)}`;
+      elPnl.className = estimatedPnl >= 0
+        ? "text-xl font-black text-emerald-400 mt-1"
+        : "text-xl font-black text-rose-400 mt-1";
     }
 
     renderDecisionChart(buyYesCount, buyNoCount, holdCount);
@@ -478,13 +473,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (timelineChartInstance) timelineChartInstance.destroy();
 
     const chronological = [...data].reverse();
-    const labels = chronological.map((d) => (d.timestamp ? new Date(d.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : ""));
+    const labels = chronological.map((d) => d.timestamp ? new Date(d.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : "");
 
     let cumulativeScore = 0;
     const scores = chronological.map((d) => {
-      const kep = (d.keputusan || "").toUpperCase();
-      if (kep === "BUY_YES") cumulativeScore += 1;
-      else if (kep === "BUY_NO") cumulativeScore -= 1;
+      const side = (d.side || "").toUpperCase();
+      if (side === "BUY_YES") cumulativeScore += 1;
+      else if (side === "BUY_NO") cumulativeScore -= 1;
       return cumulativeScore;
     });
 
@@ -492,18 +487,16 @@ document.addEventListener("DOMContentLoaded", () => {
       type: "line",
       data: {
         labels: labels,
-        datasets: [
-          {
-            label: "Tren Sentimen Keputusan AI",
-            data: scores,
-            borderColor: "#06b6d4",
-            backgroundColor: "rgba(6, 182, 212, 0.1)",
-            fill: true,
-            tension: 0.3,
-            pointRadius: 4,
-            pointBackgroundColor: "#06b6d4",
-          },
-        ],
+        datasets: [{
+          label: "Tren Keputusan AI (Real Trade)",
+          data: scores,
+          borderColor: "#06b6d4",
+          backgroundColor: "rgba(6, 182, 212, 0.1)",
+          fill: true,
+          tension: 0.3,
+          pointRadius: 4,
+          pointBackgroundColor: "#06b6d4",
+        }],
       },
       options: {
         responsive: true,
@@ -512,9 +505,7 @@ document.addEventListener("DOMContentLoaded", () => {
           x: { ticks: { color: "#64748b" }, grid: { color: "rgba(255,255,255,0.05)" } },
           y: { ticks: { color: "#64748b" }, grid: { color: "rgba(255,255,255,0.05)" } },
         },
-        plugins: {
-          legend: { labels: { color: "#94a3b8" } },
-        },
+        plugins: { legend: { labels: { color: "#94a3b8" } } },
       },
     });
   }
@@ -536,37 +527,40 @@ document.addEventListener("DOMContentLoaded", () => {
   function renderTableRows(data) {
     if (!logTableBody) return;
     if (!data || data.length === 0) {
-      logTableBody.innerHTML = `<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">Tidak ada log yang sesuai filter pencarian.</td></tr>`;
+      logTableBody.innerHTML = `<tr><td colspan="6" class="px-4 py-6 text-center text-slate-500">Belum ada data trading real. Jalankan bot di VPS terlebih dahulu.</td></tr>`;
       return;
     }
 
-    logTableBody.innerHTML = data
-      .map((row) => {
-        let decisionBadge = "";
-        const kep = (row.keputusan || "").toUpperCase();
-        if (kep === "BUY_YES") {
-          decisionBadge = `<span class="px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40">BUY YES</span>`;
-        } else if (kep === "BUY_NO") {
-          decisionBadge = `<span class="px-2.5 py-1 rounded-md bg-rose-500/20 text-rose-300 font-bold border border-rose-500/40">BUY NO</span>`;
-        } else {
-          decisionBadge = `<span class="px-2.5 py-1 rounded-md bg-slate-800 text-slate-300 font-semibold border border-slate-700">HOLD</span>`;
-        }
+    logTableBody.innerHTML = data.map((row) => {
+      const side = (row.side || "").toUpperCase();
+      let sideBadge = "";
+      if (side === "BUY_YES") {
+        sideBadge = `<span class="px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40">BUY YES</span>`;
+      } else if (side === "BUY_NO") {
+        sideBadge = `<span class="px-2.5 py-1 rounded-md bg-rose-500/20 text-rose-300 font-bold border border-rose-500/40">BUY NO</span>`;
+      } else {
+        sideBadge = `<span class="px-2.5 py-1 rounded-md bg-slate-800 text-slate-300 font-semibold border border-slate-700">HOLD</span>`;
+      }
 
-        const formattedTime = row.timestamp ? new Date(row.timestamp).toLocaleString("id-ID") : "N/A";
+      const isRealOrder = row.orderId && row.orderId !== "HOLD" && row.orderId !== "SIMULATED" && !row.orderId.startsWith("ERROR");
+      const orderBadge = isRealOrder
+        ? `<span class="text-xs font-mono text-emerald-400" title="${row.orderId}">✅ ${row.orderId.substring(0, 10)}...</span>`
+        : `<span class="text-xs text-slate-500">${row.orderId || "-"}</span>`;
 
-        return `
-          <tr class="hover:bg-slate-900/60 transition">
-            <td class="px-4 py-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${formattedTime}</td>
-            <td class="px-4 py-3 font-medium text-slate-100 max-w-xs truncate" title="${row.marketQuestion}">${row.marketQuestion || row.eventTitle}</td>
-            <td class="px-4 py-3 text-center whitespace-nowrap">
-              <span class="text-emerald-400 font-semibold">$${row.priceYes}</span> / <span class="text-rose-400 font-semibold">$${row.priceNo}</span>
-            </td>
-            <td class="px-4 py-3 text-center whitespace-nowrap">${decisionBadge}</td>
-            <td class="px-4 py-3 text-slate-300 max-w-md">${row.alasan}</td>
-          </tr>
-        `;
-      })
-      .join("");
+      const formattedTime = row.timestamp ? new Date(row.timestamp).toLocaleString("id-ID") : "N/A";
+      const bet = parseFloat(row.betUsd) || 0;
+
+      return `
+        <tr class="hover:bg-slate-900/60 transition">
+          <td class="px-4 py-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">${formattedTime}</td>
+          <td class="px-4 py-3 font-medium text-slate-100 max-w-xs truncate" title="${row.market}">${row.market}</td>
+          <td class="px-4 py-3 text-center font-mono text-cyan-400">${parseFloat(row.price || 0).toFixed(4)}</td>
+          <td class="px-4 py-3 text-center whitespace-nowrap">${sideBadge}</td>
+          <td class="px-4 py-3 text-center text-amber-300 font-bold">${bet > 0 ? "$" + bet.toFixed(2) : "-"}</td>
+          <td class="px-4 py-3 text-center">${orderBadge}</td>
+        </tr>
+      `;
+    }).join("");
   }
 
   // Search filter
