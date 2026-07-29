@@ -6,12 +6,11 @@ import ssl
 import urllib3
 import subprocess
 
-# Auto-install missing dependencies inside Python if needed
+# Auto-install missing dependencies inside Python
 for pkg in ["eth_account", "web3", "requests"]:
     try:
         __import__(pkg)
     except ImportError:
-        print(f"[INFO] Installing missing package '{pkg}'...")
         subprocess.call([sys.executable, "-m", "pip", "install", "--trusted-host", "pypi.org", "--trusted-host", "files.pythonhosted.org", pkg])
 
 # Disable SSL Warnings
@@ -62,6 +61,21 @@ ERC20_ABI = [
     }
 ]
 
+# Proxy Execute ABI for ERC-4337 / Kernel / Gnosis Safe
+PROXY_EXECUTE_ABI = [
+    {
+        "inputs": [
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "data", "type": "bytes"}
+        ],
+        "name": "execute",
+        "outputs": [],
+        "stateMutability": "payable",
+        "type": "function"
+    }
+]
+
 
 def get_web3():
     for rpc in RPC_ENDPOINTS:
@@ -75,15 +89,24 @@ def get_web3():
     return None
 
 
+def get_raw_bytes(signed_tx):
+    if hasattr(signed_tx, "raw_transaction"):
+        return signed_tx.raw_transaction
+    elif hasattr(signed_tx, "rawTransaction"):
+        return signed_tx.rawTransaction
+    elif isinstance(signed_tx, dict) and "rawTransaction" in signed_tx:
+        return signed_tx["rawTransaction"]
+    return signed_tx
+
+
 def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
     try:
         token_contract = w3.eth.contract(address=Web3.to_checksum_address(token_address), abi=ERC20_ABI)
         
-        # Check balances
         bal_eoa = token_contract.functions.balanceOf(Web3.to_checksum_address(to_address)).call()
         bal_vault = token_contract.functions.balanceOf(Web3.to_checksum_address(vault_address)).call()
 
-        print(f"\n--- Checking Token {token_address[:10]}... ---")
+        print(f"\n--- Checking USDC Token ({token_address[:10]}...) ---")
         print(f"    EOA Balance: ${bal_eoa / 1e6:.2f} USDC")
         print(f"    Vault Balance: ${bal_vault / 1e6:.2f} USDC")
 
@@ -92,23 +115,45 @@ def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
             nonce = w3.eth.get_transaction_count(signer_acc.address)
             gas_price = w3.eth.gas_price
 
-            tx = token_contract.functions.transfer(
+            # Encode ERC20 transfer data
+            transfer_data = token_contract.functions.transfer(
                 Web3.to_checksum_address(to_address),
                 bal_vault
-            ).build_transaction({
-                'chainId': 137,
-                'gas': 100000,
-                'gasPrice': gas_price,
-                'nonce': nonce
-            })
+            )._encode_transaction_data()
 
-            signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
-            tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-            print(f"✅ USDC Transfer Tx Sent! Hash: {tx_hash.hex()}")
+            # Attempt 1: Direct execute call to Proxy Vault Contract
+            try:
+                proxy_contract = w3.eth.contract(address=Web3.to_checksum_address(vault_address), abi=PROXY_EXECUTE_ABI)
+                tx_data = proxy_contract.functions.execute(
+                    Web3.to_checksum_address(token_address),
+                    0,
+                    bytes.fromhex(transfer_data[2:])
+                ).build_transaction({
+                    'chainId': 137,
+                    'gas': 150000,
+                    'gasPrice': gas_price,
+                    'nonce': nonce
+                })
+            except Exception:
+                # Attempt 2: Direct EOA transfer
+                tx_data = token_contract.functions.transfer(
+                    Web3.to_checksum_address(to_address),
+                    bal_vault
+                ).build_transaction({
+                    'chainId': 137,
+                    'gas': 100000,
+                    'gasPrice': gas_price,
+                    'nonce': nonce
+                })
+
+            signed_tx = w3.eth.account.sign_transaction(tx_data, PRIVATE_KEY)
+            raw_tx = get_raw_bytes(signed_tx)
+            tx_hash = w3.eth.send_raw_transaction(raw_tx)
+            print(f"🎉 SUCCESS! USDC Transfer Tx Sent! TxHash: {tx_hash.hex()}")
             return True
 
     except Exception as e:
-        print(f"[NOTICE] Token transfer status: {e}")
+        print(f"[NOTICE] USDC Token transfer status: {e}")
     return False
 
 
@@ -134,19 +179,37 @@ def main():
         try:
             print(f"🚀 Transferring POL from Proxy Vault back to {TARGET_WALLET}...")
             nonce = w3.eth.get_transaction_count(signer_acc.address)
-            tx = {
-                'nonce': nonce,
-                'to': Web3.to_checksum_address(TARGET_WALLET),
-                'value': pol_vault_wei - w3.to_wei(0.01, 'ether'),
-                'gas': 21000,
-                'gasPrice': w3.eth.gas_price,
-                'chainId': 137
-            }
-            signed = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
-            tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
-            print(f"✅ POL Transfer Tx Hash: {tx_hash.hex()}")
+            gas_price = w3.eth.gas_price
+
+            # Try direct proxy execute for native POL transfer
+            try:
+                proxy_contract = w3.eth.contract(address=Web3.to_checksum_address(POL_PROXY_VAULT), abi=PROXY_EXECUTE_ABI)
+                tx = proxy_contract.functions.execute(
+                    Web3.to_checksum_address(TARGET_WALLET),
+                    pol_vault_wei - w3.to_wei(0.01, 'ether'),
+                    b''
+                ).build_transaction({
+                    'nonce': nonce,
+                    'gas': 100000,
+                    'gasPrice': gas_price,
+                    'chainId': 137
+                })
+            except Exception:
+                tx = {
+                    'nonce': nonce,
+                    'to': Web3.to_checksum_address(TARGET_WALLET),
+                    'value': pol_vault_wei - w3.to_wei(0.01, 'ether'),
+                    'gas': 21000,
+                    'gasPrice': gas_price,
+                    'chainId': 137
+                }
+
+            signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+            raw_tx = get_raw_bytes(signed_tx)
+            tx_hash = w3.eth.send_raw_transaction(raw_tx)
+            print(f"🎉 SUCCESS! POL Transfer Tx Sent! TxHash: {tx_hash.hex()}")
         except Exception as err:
-            print(f"[NOTICE] POL Transfer: {err}")
+            print(f"[NOTICE] POL Transfer status: {err}")
 
     # 2. Native USDC & Bridged USDC.e check
     withdraw_token(w3, USDC_NATIVE_ADDR, signer_acc, TARGET_WALLET, USDC_PROXY_VAULT)
