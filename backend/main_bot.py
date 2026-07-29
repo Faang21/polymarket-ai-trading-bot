@@ -216,12 +216,19 @@ def execute_real_order(token_id, price, side_label):
         token_id=str(token_id)
     )
 
-    # Registrasi / Derivasi L2 API Creds (Key, Secret, Passphrase) dari Private Key
+    # Registrasi / Derivasi L2 API Creds (Key, Secret, Passphrase) dari Private Key untuk V2
     derived_creds = None
     try:
         temp_client = ClobClient(host=CLOB_HOST, key=PRIVATE_KEY, chain_id=137, signature_type=0)
-        derived_creds = temp_client.create_or_derive_api_creds()
-        print(f"   🔑 L2 ApiCreds Resmi Terderivasi: {derived_creds.api_key[:12]}...")
+        if hasattr(temp_client, "create_or_derive_api_key"):
+            derived_creds = temp_client.create_or_derive_api_key()
+        elif hasattr(temp_client, "create_or_derive_api_creds"):
+            derived_creds = temp_client.create_or_derive_api_creds()
+        elif hasattr(temp_client, "create_api_key"):
+            derived_creds = temp_client.create_api_key()
+            
+        if derived_creds:
+            print(f"   🔑 L2 ApiCreds V2 Resmi Terderivasi: {derived_creds.api_key[:12]}...")
     except Exception as e:
         print(f"   ⚠️ API Creds derivation info: {e}")
         derived_creds = ApiCreds(
