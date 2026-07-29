@@ -79,29 +79,6 @@ def get_raw_bytes(signed_tx):
     return signed_tx
 
 
-def try_polymarket_clob_gasless(signer_acc):
-    try:
-        from py_clob_client.client import ClobClient
-        print("🚀 [GASLESS RELAYER] Requesting Polymarket CLOB Relayer to process withdrawal...")
-        client = ClobClient(
-            host="https://clob.polymarket.com",
-            key=PRIVATE_KEY,
-            chain_id=137,
-            signature_type=1
-        )
-        try:
-            creds = client.create_or_derive_api_creds()
-            client.set_api_creds(creds)
-        except Exception:
-            pass
-        res = client.withdraw(amount=31.82, asset_type="COLLATERAL")
-        print(f"🎉 SUCCESS! Polymarket Gasless Relayer Response: {res}")
-        return True
-    except Exception as err:
-        print(f"[NOTICE] Polymarket Gasless Relayer status: {err}")
-    return False
-
-
 def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
     try:
         token_contract = w3.eth.contract(address=Web3.to_checksum_address(token_address), abi=ERC20_ABI)
@@ -117,11 +94,8 @@ def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
             print(f"🚀 Transferring ${bal_vault / 1e6:.2f} USDC from Vault to EOA Wallet...")
             eoa_pol = w3.eth.get_balance(signer_acc.address)
 
-            if eoa_pol < w3.to_wei(0.01, 'ether'):
-                print("⚠️ EOA wallet has 0 POL. Attempting Polymarket Gasless Relayer...")
-                if try_polymarket_clob_gasless(signer_acc):
-                    return True
-                print("📌 [BEBAS GAS FEE] Kirim 0.1 POL (~Rp 100,- / $0.007 USD) ke wallet 0xa959f26847211f71A22aDb087EBe50E0743e7D66 untuk menyelesaikan penarikan secara instant!")
+            if eoa_pol < w3.to_wei(0.005, 'ether'):
+                print("⚠️ EOA wallet needs minimal POL for gas.")
                 return False
 
             nonce = w3.eth.get_transaction_count(signer_acc.address)
@@ -168,14 +142,14 @@ def main():
     print(f"[POL BALANCE] Vault POL: {w3.from_wei(pol_vault_wei, 'ether'):.4f} POL")
     
     if pol_vault_wei > w3.to_wei(0.1, 'ether'):
-        if pol_eoa_wei >= w3.to_wei(0.01, 'ether'):
+        if pol_eoa_wei >= w3.to_wei(0.005, 'ether'):
             try:
                 print(f"🚀 Transferring {w3.from_wei(pol_vault_wei, 'ether'):.2f} POL from Proxy Vault to {TARGET_WALLET}...")
                 nonce = w3.eth.get_transaction_count(signer_acc.address)
                 tx = {
                     'nonce': nonce,
                     'to': Web3.to_checksum_address(TARGET_WALLET),
-                    'value': pol_vault_wei - w3.to_wei(0.01, 'ether'),
+                    'value': pol_vault_wei - w3.to_wei(0.005, 'ether'),
                     'gas': 21000,
                     'gasPrice': w3.eth.gas_price,
                     'chainId': 137
@@ -186,14 +160,11 @@ def main():
                 print(f"🎉 SUCCESS! POL Transfer Tx Hash: {tx_hash.hex()}")
             except Exception as err:
                 print(f"[NOTICE] POL Transfer status: {err}")
-        else:
-            print("⚠️ [GAS NOTICE] EOA wallet has 0 POL balance for gas fee. Attempting gasless relayer...")
-            try_polymarket_clob_gasless(signer_acc)
 
     withdraw_token(w3, USDC_NATIVE_ADDR, signer_acc, TARGET_WALLET, USDC_PROXY_VAULT)
     withdraw_token(w3, USDC_BRIDGED_ADDR, signer_acc, TARGET_WALLET, USDC_PROXY_VAULT)
 
-    print("\n🎉 [ON-CHAIN WITHDRAWAL CHECK COMPLETE]")
+    print("\n🎉 [ON-CHAIN WITHDRAWAL FINISHED]")
 
 
 if __name__ == "__main__":
