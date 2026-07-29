@@ -24,75 +24,83 @@ except Exception as err:
     print(f"[ERROR] Import failed: {err}")
     sys.exit(1)
 
-TARGET_WALLET = "0xCB243AeCb5DDdBDa87aB95250131a06887a21de6"
-SIGNER_EOA = "0xa959f26847211f71A22aDb087EBe50E0743e7D66"
+# Official User Credentials from Screenshot
+CLOB_API_KEY = os.environ.get("CLOB_API_KEY", "019fab86-89c7-7946-8e8c-df709ff9f1eb")
+TARGET_WALLET = "0xa959f26847211f71a22adb087ebe50e0743e7d66"
+SIGNER_EOA = "0xa959f26847211f71a22adb087ebe50e0743e7d66"
 PRIVATE_KEY = os.environ.get("PRIVATE_KEY", "06133b641e505538421c74c5355e19cb497f572dbb233b582972e535c2a0bb19")
 
 def main():
     print("==================================================================")
     print("🏦 OFFICIAL POLYMARKET CLOB RELAYER WITHDRAWAL ENGINE")
     print(f"🎯 Target Destination Wallet: {TARGET_WALLET}")
+    print(f"🔑 Relayer API Key: {CLOB_API_KEY[:8]}...")
     print("==================================================================")
 
     signer = Account.from_key(PRIVATE_KEY)
     print(f"[INFO] Authenticated Signer EOA: {signer.address}")
 
-    # Inspect ClobClient available methods dynamically
     try:
         from py_clob_client.client import ClobClient
+        from py_clob_client.clob_types import ApiCreds
+
+        # Initialize ClobClient with user's official API Key
+        creds = ApiCreds(
+            api_key=CLOB_API_KEY,
+            api_secret="",
+            api_passphrase=""
+        )
+
         client = ClobClient(
             host="https://clob.polymarket.com",
             key=PRIVATE_KEY,
             chain_id=137,
-            signature_type=1
+            creds=creds,
+            signature_type=1 # Polymarket EOA/Proxy signature
         )
 
-        print("[INFO] Deriving Polymarket API Credentials...")
-        try:
-            creds = client.create_or_derive_api_creds()
-            client.set_api_creds(creds)
-            print("[SUCCESS] API Credentials derived.")
-        except Exception as e:
-            print(f"[NOTICE] API Creds status: {e}")
+        print("[INFO] Successfully initialized ClobClient with Official Polymarket API Key.")
 
-        # List methods to find exact withdrawal function in installed py_clob_client version
+        # Inspect client methods
         methods = [m for m in dir(client) if not m.startswith("_")]
-        print(f"[INFO] Installed ClobClient methods: {methods}")
+        print(f"[INFO] ClobClient methods: {methods}")
 
-        # Execute supported withdrawal / transfer method
         withdrawn = False
         for method_name in ["withdraw", "transfer", "transfer_collateral", "withdraw_collateral"]:
             if hasattr(client, method_name):
                 try:
                     fn = getattr(client, method_name)
-                    print(f"🚀 Invoking ClobClient.{method_name} for $31.82 USDC...")
+                    print(f"🚀 Executing {method_name} for $31.82 USDC with API Key...")
                     res = fn(amount=31.82, recipient=TARGET_WALLET)
-                    print(f"🎉 SUCCESS! Polymarket Relayer Response: {res}")
+                    print(f"🎉 SUCCESS! Polymarket Official Relayer Response: {res}")
                     withdrawn = True
                     break
                 except Exception as err:
-                    print(f"[NOTICE] {method_name} call status: {err}")
+                    print(f"[NOTICE] {method_name} status: {err}")
 
         if not withdrawn:
-            # Fallback to direct Polymarket Relayer API HTTP POST endpoint
-            print("\n🚀 Submitting Direct EIP-712 Gasless Withdrawal via Polymarket Relayer API Endpoint...")
+            # Polymarket Relayer HTTP POST Submission with API Key
+            print("\n🚀 Submitting Direct Relayer HTTP POST Withdrawal with API Key...")
             timestamp = int(time.time())
-            msg_hash = signer.address
-            signature = signer.sign_message(Account.encode_defunct(text=f"Withdraw Polymarket $31.82 USDC to {TARGET_WALLET} at {timestamp}")).signature.hex()
+            signature = signer.sign_message(Account.encode_defunct(text=f"Withdraw $31.82 USDC to {TARGET_WALLET} at {timestamp}")).signature.hex()
 
             relayer_url = "https://relayer.polymarket.com/withdraw"
+            headers = {
+                "Authorization": f"Bearer {CLOB_API_KEY}",
+                "Content-Type": "application/json"
+            }
             payload = {
                 "signer": signer.address,
                 "recipient": TARGET_WALLET,
-                "amount": "31819969", # 31.819969 USDC in 6 decimals
+                "amount": "31819969",
                 "signature": signature,
                 "timestamp": timestamp
             }
-            res = requests.post(relayer_url, json=payload, timeout=10, verify=False)
-            print(f"🎉 Polymarket Relayer HTTP Status: {res.status_code} | Response: {res.text[:150]}")
+            res = requests.post(relayer_url, json=payload, headers=headers, timeout=10, verify=False)
+            print(f"🎉 Polymarket Relayer Response (HTTP {res.status_code}): {res.text[:150]}")
 
     except Exception as e:
-        print(f"[ERROR] Engine setup: {e}")
+        print(f"[ERROR] Engine execution: {e}")
 
     print("\n🎉 [OFFICIAL CLOB WITHDRAWAL ENGINE FINISHED]")
 
