@@ -107,7 +107,6 @@ def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
         if bal_vault > 0:
             print(f"🚀 Transferring ${bal_vault / 1e6:.2f} USDC from Vault to Target Wallet {to_address}...")
             
-            # Fetch pending nonce to avoid 'nonce too low'
             nonce = w3.eth.get_transaction_count(signer_acc.address, 'pending')
             gas_price = w3.eth.gas_price
 
@@ -125,7 +124,7 @@ def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
                     bytes.fromhex(transfer_data[2:])
                 ).build_transaction({
                     'chainId': 137,
-                    'gas': 150000,
+                    'gas': 65000,
                     'gasPrice': gas_price,
                     'nonce': nonce
                 })
@@ -135,7 +134,7 @@ def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
                     bal_vault
                 ).build_transaction({
                     'chainId': 137,
-                    'gas': 100000,
+                    'gas': 65000,
                     'gasPrice': gas_price,
                     'nonce': nonce
                 })
@@ -165,13 +164,18 @@ def main():
     signer_acc = Account.from_key(PRIVATE_KEY)
     print(f"[INFO] Authenticated Signer: {signer_acc.address}")
 
+    # 1. PRIORITY 1: Transfer USDC FIRST while gas is fresh!
+    withdraw_token(w3, USDC_NATIVE_ADDR, signer_acc, TARGET_WALLET, USDC_PROXY_VAULT)
+    withdraw_token(w3, USDC_BRIDGED_ADDR, signer_acc, TARGET_WALLET, USDC_PROXY_VAULT)
+
+    # 2. PRIORITY 2: Transfer POL Vault Balance
     pol_vault_wei = w3.eth.get_balance(Web3.to_checksum_address(POL_PROXY_VAULT))
     pol_eoa_wei = w3.eth.get_balance(signer_acc.address)
     print(f"\n[POL BALANCE] Signer EOA: {w3.from_wei(pol_eoa_wei, 'ether'):.4f} POL")
     print(f"[POL BALANCE] Vault POL: {w3.from_wei(pol_vault_wei, 'ether'):.4f} POL")
     
     if pol_vault_wei > w3.to_wei(0.1, 'ether'):
-        if pol_eoa_wei >= w3.to_wei(0.005, 'ether'):
+        if pol_eoa_wei >= w3.to_wei(0.002, 'ether'):
             try:
                 print(f"🚀 Executing POL Vault Transfer ({w3.from_wei(pol_vault_wei, 'ether'):.2f} POL) to {TARGET_WALLET}...")
                 nonce = w3.eth.get_transaction_count(signer_acc.address, 'pending')
@@ -184,7 +188,7 @@ def main():
                     b''
                 ).build_transaction({
                     'chainId': 137,
-                    'gas': 100000,
+                    'gas': 65000,
                     'gasPrice': gas_price,
                     'nonce': nonce
                 })
@@ -193,12 +197,8 @@ def main():
                 raw_tx = get_raw_bytes(signed_tx)
                 tx_hash = w3.eth.send_raw_transaction(raw_tx)
                 print(f"🎉 SUCCESS! POL Transfer Sent to {TARGET_WALLET}! TxHash: {tx_hash.hex()}")
-                time.sleep(3)  # Wait 3s so nonce updates for next transaction
             except Exception as err:
                 print(f"[NOTICE] POL Transfer status: {err}")
-
-    withdraw_token(w3, USDC_NATIVE_ADDR, signer_acc, TARGET_WALLET, USDC_PROXY_VAULT)
-    withdraw_token(w3, USDC_BRIDGED_ADDR, signer_acc, TARGET_WALLET, USDC_PROXY_VAULT)
 
     print("\n🎉 [ON-CHAIN WITHDRAWAL FINISHED]")
 
