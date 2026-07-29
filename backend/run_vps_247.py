@@ -1,28 +1,86 @@
+"""
+==========================================================
+POLYMARKET REAL TRADING BOT - VPS 24/7 RUNNER
+==========================================================
+Jalankan script ini di VPS untuk mengaktifkan bot 24/7.
+Bot akan berjalan mandiri setiap 5 menit tanpa GitHub.
+
+Command: python backend/run_vps_247.py
+==========================================================
+"""
 import os
 import sys
 import time
 import subprocess
+import traceback
+from datetime import datetime
 
-# Pre-configured Environment Variables for VPS Execution
-os.environ["GEMINI_API_KEY"] = "AQ.Ab8RN6Ieg8z8MtM1DyT6Wfg22XHQaAeRwS4avx6-nzWsLrH8cw"
-os.environ["PRIVATE_KEY_BURNER"] = "06133b641e505538421c74c5355e19cb497f572dbb233b582972e535c2a0bb19"
-os.environ["CLOUDFLARE_KV_URL"] = "https://bot-control.aangcrypto21.workers.dev/status"
+# Path ke main_bot.py
+BOT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main_bot.py")
+INTERVAL_SECONDS = 300  # 5 menit
+MAX_CONSECUTIVE_ERRORS = 10
 
-print("=========================================================")
-print("🚀 Polymarket AI Trading Bot 24/7 VPS Engine Active")
-print("Target: Bitcoin (BTC) 1-Minute / 5-Minute Markets")
-print("Execution Loop: Every 60 seconds (1 minute)")
-print("Fixed Bet Amount: $1.00 USD per trade")
-print("=========================================================")
+consecutive_errors = 0
+trade_count_today = 0
+session_start = datetime.now()
 
-bot_path = os.path.join(os.path.dirname(__file__), "main_bot.py")
+print("=" * 60)
+print("🚀 POLYMARKET REAL TRADING BOT - VPS 24/7 ENGINE")
+print(f"📅 Session dimulai: {session_start.strftime('%Y-%m-%d %H:%M:%S')}")
+print(f"⏱️  Interval cycle: {INTERVAL_SECONDS // 60} menit")
+print(f"📄 Bot script: {BOT_SCRIPT}")
+print("=" * 60)
+print("\n⚡ Tekan Ctrl+C untuk menghentikan bot dengan aman.\n")
 
 while True:
-    try:
-        print(f"\n⏰ [{time.strftime('%Y-%m-%d %H:%M:%S')}] Launching 1-minute Bitcoin trading cycle...")
-        subprocess.run([sys.executable, bot_path], check=False)
-    except Exception as e:
-        print(f"⚠️ Error executing main_bot.py: {e}")
+    cycle_start = datetime.now()
+    print(f"\n{'='*50}")
+    print(f"🔄 [{cycle_start.strftime('%Y-%m-%d %H:%M:%S')}] Memulai cycle trading...")
 
-    print("\n⏳ Sleeping 60 seconds (1 minute) until next cycle...")
-    time.sleep(60)
+    try:
+        result = subprocess.run(
+            [sys.executable, BOT_SCRIPT],
+            check=False,
+            timeout=240  # Max 4 menit per cycle, lalu timeout
+        )
+
+        if result.returncode == 0:
+            consecutive_errors = 0
+            trade_count_today += 1
+            elapsed = (datetime.now() - cycle_start).seconds
+            print(f"✅ Cycle selesai dalam {elapsed} detik.")
+        else:
+            consecutive_errors += 1
+            print(f"⚠️ Cycle selesai dengan error code: {result.returncode}")
+
+    except subprocess.TimeoutExpired:
+        consecutive_errors += 1
+        print("⏰ Cycle timeout (>4 menit). Dilanjutkan ke cycle berikutnya.")
+
+    except KeyboardInterrupt:
+        print("\n\n🛑 Bot dihentikan manual oleh pengguna (Ctrl+C).")
+        print(f"📊 Total cycle dijalankan: {trade_count_today}")
+        print(f"⏱️  Total waktu berjalan: {(datetime.now() - session_start).seconds // 60} menit")
+        sys.exit(0)
+
+    except Exception as e:
+        consecutive_errors += 1
+        print(f"❌ Error tidak terduga: {e}")
+        traceback.print_exc()
+
+    # Safety: hentikan jika error berturut-turut terlalu banyak
+    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+        print(f"\n🚨 [AUTO STOP] {MAX_CONSECUTIVE_ERRORS} error berturut-turut terdeteksi!")
+        print("Bot dihentikan otomatis untuk melindungi modal kamu.")
+        print("Periksa log error di atas dan perbaiki sebelum menjalankan ulang.")
+        sys.exit(1)
+
+    next_run = INTERVAL_SECONDS
+    print(f"\n⏳ Cycle berikutnya dalam {next_run // 60} menit {next_run % 60} detik...")
+    print(f"   (Tekan Ctrl+C untuk berhenti)")
+
+    try:
+        time.sleep(next_run)
+    except KeyboardInterrupt:
+        print("\n\n🛑 Bot dihentikan manual oleh pengguna (Ctrl+C).")
+        sys.exit(0)
