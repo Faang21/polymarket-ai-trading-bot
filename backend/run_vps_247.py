@@ -77,8 +77,11 @@ while True:
         print("Periksa log error di atas dan perbaiki sebelum menjalankan ulang.")
         sys.exit(1)
 
-    next_run = INTERVAL_SECONDS
-    print(f"\n⏳ Cycle berikutnya dalam {next_run // 60} menit {next_run % 60} detik...")
+    now_sec = time.time()
+    next_clock_tick = ((now_sec // INTERVAL_SECONDS) + 1) * INTERVAL_SECONDS
+    next_run = max(1, int(next_clock_tick - now_sec))
+    
+    print(f"\n⏳ Cycle berikutnya tepat di menit ke-{(int(next_clock_tick) % 3600)//60:02d} (dalam {next_run // 60} menit {next_run % 60} detik)...")
     print(f"   (Tekan Ctrl+C untuk berhenti)")
 
     try:
