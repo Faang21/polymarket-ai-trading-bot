@@ -4,3 +4,5 @@ pandas
 eth-account
 web3
 py-clob-client
+httpx
+urllib3
