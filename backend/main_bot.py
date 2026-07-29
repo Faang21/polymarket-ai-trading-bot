@@ -9,6 +9,11 @@ import requests
 import urllib3
 from datetime import datetime, timezone
 
+# Ensure script directory is always in sys.path for config.py import
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
 # SSL Bypass
 ssl._create_default_https_context = ssl._create_unverified_context
 os.environ["PYTHONHTTPSVERIFY"] = "0"
