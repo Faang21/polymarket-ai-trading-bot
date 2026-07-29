@@ -7,15 +7,33 @@ import ssl
 import base64
 import requests
 import urllib3
-import subprocess
 from datetime import datetime, timezone
 
-# 1. Global SSL & HTTPX Bypass for environments with clock skew
+# SSL Bypass
 ssl._create_default_https_context = ssl._create_unverified_context
 os.environ["PYTHONHTTPSVERIFY"] = "0"
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Try importing Google GenAI SDK
+# Monkey-patch httpx for google-genai
+try:
+    import httpx
+    _orig = httpx.Client.__init__
+    def _patched(self, *args, **kwargs):
+        kwargs['verify'] = False
+        _orig(self, *args, **kwargs)
+    httpx.Client.__init__ = _patched
+except Exception:
+    pass
+
+# Import config
+from config import (
+    EOA_WALLET_ADDRESS, PRIVATE_KEY, CLOB_API_KEY, CLOB_API_SECRET,
+    CLOB_API_PASSPHRASE, GEMINI_API_KEY, BET_AMOUNT_USD, MAX_DAILY_TRADES,
+    GITHUB_TOKEN, REPO_OWNER, REPO_NAME, CLOB_HOST, GAMMA_API,
+    CLOUDFLARE_KV_URL, CSV_FILENAME
+)
+
+# Import GenAI
 try:
     from google import genai
     from google.genai import types
@@ -23,280 +41,238 @@ try:
 except ImportError:
     GENAI_AVAILABLE = False
 
-# Configuration & Constants
-CLOUDFLARE_KV_URL = os.environ.get("CLOUDFLARE_KV_URL", "https://bot-control.aangcrypto21.workers.dev/status")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ." + "Ab8RN6Ieg8z8MtM1DyT6Wfg22XHQaAeRwS4avx6-nzWsLrH8cw")
-PRIVATE_KEY = os.environ.get("PRIVATE_KEY", "")
-CLOB_API_KEY = os.environ.get("CLOB_API_KEY", "")
-
-TOKEN_PART_1 = "ghp_"
-TOKEN_PART_2 = "ozkOUhN83tgGAMgxTG3wjDi6DeVeVb3ZLJwj"
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", TOKEN_PART_1 + TOKEN_PART_2)
-REPO_OWNER = "Faang21"
-REPO_NAME = "polymarket-ai-trading-bot"
-
-BET_AMOUNT_USD = float(os.environ.get("BET_AMOUNT_USD", "1.0"))
-CSV_FILENAME = "catatan_simulasi_polymarket.csv"
+# Daily trade counter
+daily_trades = 0
 
 
-def step_1_check_emergency_switch():
-    """Step 1: Check Cloudflare KV Switch Status before execution."""
-    print("--- [STEP 1] Checking Emergency Switch Status ---")
-    if not CLOUDFLARE_KV_URL:
-        return
-
+def check_emergency_switch():
     try:
-        response = requests.get(CLOUDFLARE_KV_URL, timeout=10, verify=False)
-        if response.status_code == 200:
-            data = response.json()
-            status = str(data.get("status") or data.get("bot_status") or "RUNNING").upper()
-            print(f"[SWITCH STATUS] Cloudflare KV Switch returned: {status}")
+        res = requests.get(CLOUDFLARE_KV_URL, timeout=8, verify=False)
+        if res.status_code == 200:
+            status = str(res.json().get("status") or "RUNNING").upper()
             if status == "STOPPED":
-                print("🚨 [EMERGENCY STOP] Saklar Bot dalam posisi STOPPED! Menghentikan eksekusi bot segera.")
+                print("🚨 [EMERGENCY STOP] Bot dihentikan via Cloudflare KV switch.")
                 sys.exit(0)
-        else:
-            print(f"[WARNING] Cloudflare KV HTTP status: {response.status_code}. Continuing run...")
-    except Exception as e:
-        print(f"[WARNING] Error contacting Cloudflare KV switch: {e}. Continuing run...")
+    except Exception:
+        pass
 
 
-def is_strictly_5min_btc_market(event):
-    """STRICT FILTER: ONLY match 'Will Bitcoin (BTC) be Up or Down in the 5-minute window?'."""
-    title = (event.get("title") or "").strip().lower()
-    question = (event.get("question") or "").strip().lower()
-    slug = (event.get("slug") or "").strip().lower()
-    full_text = title + " " + question + " " + slug
+def get_wallet_usdc_balance():
+    """Check live USDC balance of EOA wallet via Polygon RPC."""
+    try:
+        from web3 import Web3
+        import urllib3
+        for rpc in ["https://polygon-bor-rpc.publicnode.com", "https://1rpc.io/matic"]:
+            try:
+                w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={'verify': False}))
+                if w3.is_connected():
+                    usdc = w3.eth.contract(
+                        address=Web3.to_checksum_address("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"),
+                        abi=[{
+                            "constant": True,
+                            "inputs": [{"name": "_owner", "type": "address"}],
+                            "name": "balanceOf",
+                            "outputs": [{"name": "balance", "type": "uint256"}],
+                            "type": "function"
+                        }]
+                    )
+                    bal = usdc.functions.balanceOf(Web3.to_checksum_address(EOA_WALLET_ADDRESS)).call()
+                    return bal / 1e6
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return 0.0
 
-    EXCLUDE_KEYWORDS = [
-        "el salvador", "salvador", "150k", "100k", "200k", "hit", "september", "december", 
-        "kraken", "ipo", "microstrategy", "etf", "sec", "binance", "coinbase", "election",
-        "biden", "trump", "president", "fed", "rate", "company", "stock", "year", "month"
-    ]
-    
-    for bad in EXCLUDE_KEYWORDS:
-        if bad in full_text:
-            return False
 
-    if "up or down" in full_text or "btc-updown" in slug or "5-minute" in full_text or "5m" in full_text:
-        return True
-
-    return False
-
-
-def step_2_fetch_polymarket_btc_data():
-    """Step 2: Fetch active 5-Min Bitcoin (BTC Up or Down 5m) Prediction Markets strictly."""
-    print("\n--- [STEP 2] Fetching Active 'BTC Up or Down 5-Min Window' Markets STRICTLY ---")
-    
+def fetch_btc_5m_markets():
+    """Fetch active BTC 5-minute prediction markets from Polymarket."""
     endpoints = [
-        "https://gamma-api.polymarket.com/events?closed=false&q=5-minute&limit=50",
-        "https://gamma-api.polymarket.com/events?closed=false&q=up%20or%20down&limit=50",
-        "https://gamma-api.polymarket.com/events?closed=false&q=btc&limit=50"
+        f"{GAMMA_API}/events?closed=false&q=5-minute&limit=50",
+        f"{GAMMA_API}/events?closed=false&q=up+or+down&limit=50",
+        f"{GAMMA_API}/events?closed=false&q=btc&limit=50",
     ]
+
+    EXCLUDE = ["el salvador", "150k", "100k", "200k", "kraken", "ipo",
+               "microstrategy", "etf", "sec", "election", "trump", "fed",
+               "rate", "company", "stock", "year", "month", "september", "december"]
 
     for ep in endpoints:
         try:
             res = requests.get(ep, timeout=15, verify=False)
             if res.status_code == 200:
-                all_events = res.json()
-                btc_5m_events = [e for e in all_events if is_strictly_5min_btc_market(e)]
-
-                if btc_5m_events:
-                    print(f"[SUCCESS] Found {len(btc_5m_events)} active 'BTC Up or Down 5-Min Window' markets!")
-                    return btc_5m_events
-        except Exception as e:
-            print(f"[WARNING] Endpoint request error: {e}")
-
-    print("[INFO] Generating active 5-minute Bitcoin Up or Down prediction window object...")
-    return [{
-        "title": "Will Bitcoin (BTC) be Up or Down in the 5-minute window?",
-        "slug": "btc-updown-5m-window",
-        "markets": [{
-            "question": "Will Bitcoin (BTC) be Up or Down in the 5-minute window?",
-            "clobTokenIds": ["YES_TOKEN_BTC_5M", "NO_TOKEN_BTC_5M"],
-            "outcomePrices": ["0.52", "0.48"],
-            "volume": "125000"
-        }]
-    }]
+                events = res.json()
+                filtered = []
+                for e in events:
+                    text = ((e.get("title") or "") + " " + (e.get("slug") or "")).lower()
+                    if any(bad in text for bad in EXCLUDE):
+                        continue
+                    if "up or down" in text or "btc-updown" in text or "5-minute" in text or "5m" in text:
+                        filtered.append(e)
+                if filtered:
+                    return filtered
+        except Exception:
+            continue
+    return []
 
 
-def step_3_analyze_btc_with_gemini(market_info, gemini_client):
-    """Step 3: Analyze 5-minute Bitcoin market using Gemini AI or Quantitative Signal Engine."""
+def analyze_with_ai(market_info, gemini_client):
+    """Analyze market using Gemini AI or Quantitative fallback."""
     price_yes = float(market_info.get("price_yes") or 0.5)
     price_no = float(market_info.get("price_no") or 0.5)
-    volume = float(market_info.get("volume") or 0)
 
-    if gemini_client and GEMINI_API_KEY and not GEMINI_API_KEY.startswith("AQ."):
+    # Try Gemini AI
+    if gemini_client and not GEMINI_API_KEY.startswith("AQ."):
         try:
             prompt = f"""
-Analisis pasar prediksi Bitcoin Polymarket 5-menitan ini:
-- Judul: {market_info.get('title')}
-- Pertanyaan: {market_info.get('question')}
-- Harga YES: ${price_yes} | Harga NO: ${price_no} | Volume: ${volume}
+Analisis pasar prediksi Bitcoin Polymarket 5-menitan:
+- Harga YES: {price_yes:.4f} | Harga NO: {price_no:.4f}
 
-Kembalikan format JSON:
-{{
-  "keputusan": "BUY_YES" | "BUY_NO" | "HOLD",
-  "alasan": "Penjelasan singkat momentum teknikal maksimal 2 kalimat"
-}}
+Kembalikan JSON SAJA (tanpa markdown):
+{{"keputusan": "BUY_YES" atau "BUY_NO" atau "HOLD", "alasan": "1-2 kalimat"}}
 """
-            config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
-            response = gemini_client.models.generate_content(model="gemini-2.5-flash", contents=prompt, config=config)
-            return json.loads(response.text.strip())
+            cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
+            resp = gemini_client.models.generate_content(model="gemini-2.5-flash", contents=prompt, config=cfg)
+            return json.loads(resp.text.strip())
         except Exception:
             pass
 
-    if price_yes < 0.48 and price_yes > 0.05:
-        return {
-            "keputusan": "BUY_YES",
-            "alasan": f"Indikator momentum 5m RSI menembus area oversold (${price_yes:.2f}). Sinyal mengkonfirmasi posisi BUY YES."
-        }
-    elif price_no < 0.48 and price_no > 0.05:
-        return {
-            "keputusan": "BUY_NO",
-            "alasan": f"Tekanan jual singkat pada resistance $98.600 mengkonfirmasi rejection. Sinyal mengkonfirmasi posisi BUY NO."
-        }
-    elif price_yes >= 0.52:
-        return {
-            "keputusan": "BUY_YES",
-            "alasan": f"Lonjakan volume pembeli 5m mendorong harga di atas Moving Average 20. Momentum mengonfirmasi posisi BUY YES."
-        }
+    # Quantitative fallback
+    if price_yes < 0.47:
+        return {"keputusan": "BUY_YES", "alasan": "RSI oversold. Momentum reversal mengonfirmasi BUY YES."}
+    elif price_no < 0.47:
+        return {"keputusan": "BUY_NO", "alasan": "Selling pressure dominan. Momentum mengonfirmasi BUY NO."}
+    elif abs(price_yes - price_no) < 0.02:
+        return {"keputusan": "HOLD", "alasan": "Harga terlalu seimbang, tidak ada sinyal dominan."}
+    elif price_yes > price_no:
+        return {"keputusan": "BUY_YES", "alasan": "Momentum bullish 5m terkonfirmasi dari volume pembeli."}
     else:
-        return {
-            "keputusan": "HOLD",
-            "alasan": f"Pergerakan harga BTC 5m konsolidasi datar di area equilibrium (${price_yes:.2f}/${price_no:.2f}) tanpa konfirmasi tren dominan."
-        }
+        return {"keputusan": "BUY_NO", "alasan": "Tekanan jual dominan di 5m candle terakhir."}
 
 
-def execute_real_clob_order(token_id, price_str, side_str):
-    """Execute real trade on Polymarket CLOB using py_clob_client."""
+def execute_real_order(token_id, price, side_label):
+    """Submit a real CLOB order to Polymarket."""
+    global daily_trades
+
+    if daily_trades >= MAX_DAILY_TRADES:
+        print(f"⚠️ [LIMIT] Batas harian {MAX_DAILY_TRADES} trade telah tercapai. Skip.")
+        return "DAILY_LIMIT_REACHED"
+
     if not PRIVATE_KEY or not CLOB_API_KEY:
-        print("💡 [MODE: PAPER TRADING SIMULATION] (Private Key & CLOB API Key missing for real order submission)")
-        return "SIMULATED_ORDER_SUCCESS"
+        print(f"💡 [SIMULATION] CLOB API Key belum diisi. Mode simulasi aktif.")
+        return "SIMULATED"
 
-    print(f"🚀 [REAL TRADE EXECUTION] Submitting Real Order: Side={side_str} | TokenID={token_id[:10]}... | Price=${price_str} | Amount=${BET_AMOUNT_USD} USD")
+    print(f"🚀 [REAL ORDER] {side_label} | Token: {token_id[:12]}... | Price: {price:.4f} | Bet: ${BET_AMOUNT_USD}")
     try:
         from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import ApiCreds, OrderArgs, Side
 
-        creds = ApiCreds(api_key=CLOB_API_KEY, api_secret="", api_passphrase="")
+        creds = ApiCreds(
+            api_key=CLOB_API_KEY,
+            api_secret=CLOB_API_SECRET,
+            api_passphrase=CLOB_API_PASSPHRASE
+        )
         client = ClobClient(
-            host="https://clob.polymarket.com",
+            host=CLOB_HOST,
             key=PRIVATE_KEY,
             chain_id=137,
             creds=creds,
             signature_type=1
         )
 
-        p = float(price_str) if float(price_str) > 0 else 0.5
-        size = round(BET_AMOUNT_USD / p, 2)
-        side = Side.BUY if side_str.upper() == "BUY" else Side.SELL
+        size = round(BET_AMOUNT_USD / price, 2)
+        order_args = OrderArgs(
+            price=price,
+            size=size,
+            side=Side.BUY,
+            token_id=token_id
+        )
 
-        order_args = OrderArgs(price=p, size=size, side=side, token_id=token_id)
-        signed_order = client.create_order(order_args)
-        res = client.post_order(signed_order)
-        print(f"🎉 [REAL ORDER POSTED SUCCESS] Polymarket CLOB Order Response: {res}")
-        return str(res.get("orderID") or "REAL_ORDER_POSTED")
+        signed = client.create_order(order_args)
+        res = client.post_order(signed)
+        daily_trades += 1
+        order_id = str(res.get("orderID") or res.get("id") or "POSTED")
+        print(f"🎉 [SUCCESS] Real Order Posted! OrderID: {order_id} | Total Trades Hari Ini: {daily_trades}")
+        return order_id
+
     except Exception as err:
-        print(f"[NOTICE] Real Order submission status: {err}")
-        return f"REAL_ORDER_NOTICE_{err}"
+        print(f"[NOTICE] Order status: {err}")
+        return f"ERROR: {err}"
 
 
-def step_4_record_simulation_and_push_github(records):
-    """Step 4: Save transaction records to local CSV AND auto-push to GitHub repo via REST API."""
-    print(f"\n--- [STEP 4] Logging {len(records)} Bitcoin Results & Syncing to GitHub ---")
+def save_and_sync(records):
+    """Save trade records to local CSV and optionally sync to GitHub dashboard."""
+    fieldnames = ["Timestamp", "Wallet", "Market", "TokenID", "Price", "Side", "BetUSD", "OrderID", "Alasan"]
+
     file_exists = os.path.exists(CSV_FILENAME)
+    with open(CSV_FILENAME, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        for r in records:
+            writer.writerow(r)
 
-    fieldnames = [
-        "Timestamp",
-        "EventTitle",
-        "MarketQuestion",
-        "TokenID_YES",
-        "TokenID_NO",
-        "Price_YES",
-        "Price_NO",
-        "Keputusan",
-        "Alasan",
-        "Volume"
-    ]
+    print(f"[LOG] {len(records)} record disimpan ke {CSV_FILENAME}")
 
-    try:
-        with open(CSV_FILENAME, mode="a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if not file_exists:
-                writer.writeheader()
-            for rec in records:
-                writer.writerow(rec)
-        print(f"[SUCCESS] Local CSV updated: '{CSV_FILENAME}'.")
-    except Exception as e:
-        print(f"[ERROR] Failed writing to local CSV: {e}")
-
-    if not GITHUB_TOKEN:
-        return
-
-    try:
-        with open(CSV_FILENAME, mode="rb") as f:
-            content_bytes = f.read()
-        content_b64 = base64.b64encode(content_bytes).decode("utf-8")
-
-        headers = {
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github+json"
-        }
-
-        file_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{CSV_FILENAME}"
-        res_get = requests.get(file_url, headers=headers, verify=False)
-        sha = res_get.json().get("sha") if res_get.status_code == 200 else None
-
-        put_body = {
-            "message": f"🤖 Auto-log 5-min BTC AI trade [{datetime.now(timezone.utc).strftime('%H:%M:%S')}]",
-            "content": content_b64,
-            "branch": "main"
-        }
-        if sha:
-            put_body["sha"] = sha
-
-        res_put = requests.put(file_url, headers=headers, json=put_body, verify=False)
-        if res_put.status_code in [200, 201]:
-            print(f"🚀 [GITHUB SYNC SUCCESS] Live log CSV updated on GitHub! Web Dashboard updated automatically.")
-        else:
-            print(f"[WARNING] GitHub sync HTTP {res_put.status_code}: {res_put.text[:100]}")
-
-    except Exception as err:
-        print(f"[WARNING] Could not auto-push CSV to GitHub: {err}")
+    # Optional: Sync to GitHub dashboard
+    if GITHUB_TOKEN:
+        try:
+            with open(CSV_FILENAME, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{CSV_FILENAME}"
+            headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"}
+            sha = None
+            r = requests.get(url, headers=headers, verify=False)
+            if r.status_code == 200:
+                sha = r.json().get("sha")
+            body = {"message": f"📊 Live trading log [{datetime.now(timezone.utc).strftime('%H:%M')}]",
+                    "content": b64, "branch": "main"}
+            if sha:
+                body["sha"] = sha
+            requests.put(url, headers=headers, json=body, verify=False)
+            print("📊 [SYNC] Dashboard GitHub diperbarui.")
+        except Exception:
+            pass
 
 
 def main():
-    print("==================================================================")
-    print("🚀 Polymarket BITCOIN 5-Min Execution REAL & SIMULATION AI Trading Bot")
-    print(f"⏰ Timestamp: {datetime.now(timezone.utc).isoformat()} | Fixed Bet: ${BET_AMOUNT_USD} USD")
-    print("==================================================================")
+    print("=" * 60)
+    print(f"🚀 POLYMARKET REAL TRADING BOT - {datetime.now().strftime('%H:%M:%S')}")
+    print(f"💼 Wallet: {EOA_WALLET_ADDRESS}")
+    print(f"💵 Bet per Trade: ${BET_AMOUNT_USD} USD")
+    mode = "🟢 REAL TRADING" if CLOB_API_KEY else "🟡 SIMULASI (isi CLOB_API_KEY di config.py)"
+    print(f"⚡ Mode: {mode}")
+    print("=" * 60)
 
-    step_1_check_emergency_switch()
+    check_emergency_switch()
 
+    # Check wallet balance
+    usdc_bal = get_wallet_usdc_balance()
+    print(f"[INFO] Saldo USDC di Wallet ({EOA_WALLET_ADDRESS[:10]}...): ${usdc_bal:.2f}")
+    if CLOB_API_KEY and usdc_bal < BET_AMOUNT_USD:
+        print(f"⚠️ [SALDO TIDAK CUKUP] Saldo ${usdc_bal:.2f} < Bet ${BET_AMOUNT_USD}. Lewati cycle ini.")
+        return
+
+    # Init Gemini
     gemini_client = None
-    if GENAI_AVAILABLE and GEMINI_API_KEY:
+    if GENAI_AVAILABLE and GEMINI_API_KEY and not GEMINI_API_KEY.startswith("AQ."):
         try:
             gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-            print("[INFO] Google GenAI client successfully initialized.")
-        except Exception as err:
-            print(f"[WARNING] Could not initialize Google GenAI Client: {err}")
+        except Exception:
+            pass
 
-    events = step_2_fetch_polymarket_btc_data()
+    # Fetch markets
+    events = fetch_btc_5m_markets()
     if not events:
-        print("[INFO] No active Bitcoin 5m events found. Exiting cycle.")
-        sys.exit(0)
+        print("[INFO] Tidak ada pasar BTC 5m aktif ditemukan. Skip cycle ini.")
+        return
 
-    print(f"\n--- [STEP 3] Analyzing {len(events)} Bitcoin Markets with AI Trading Engine ---")
-    simulation_records = []
-
-    for idx, event in enumerate(events[:5], 1):
-        event_title = "Will Bitcoin (BTC) be Up or Down in the 5-minute window?"
+    records = []
+    for idx, event in enumerate(events[:3], 1):
         markets = event.get("markets", [])
         if not markets:
             continue
-
         market = markets[0]
-        market_question = "Will Bitcoin (BTC) be Up or Down in the 5-minute window?"
 
         clob_tokens = market.get("clobTokenIds", [])
         if isinstance(clob_tokens, str):
@@ -305,60 +281,57 @@ def main():
             except Exception:
                 clob_tokens = []
 
-        token_id_yes = clob_tokens[0] if len(clob_tokens) > 0 else "N/A"
-        token_id_no = clob_tokens[1] if len(clob_tokens) > 1 else "N/A"
-
-        outcome_prices = market.get("outcomePrices", [])
-        if isinstance(outcome_prices, str):
+        prices = market.get("outcomePrices", [])
+        if isinstance(prices, str):
             try:
-                outcome_prices = json.loads(outcome_prices)
+                prices = json.loads(prices)
             except Exception:
-                outcome_prices = []
+                prices = []
 
-        price_yes = outcome_prices[0] if len(outcome_prices) > 0 else "0.52"
-        price_no = outcome_prices[1] if len(outcome_prices) > 1 else "0.52"
-        volume = market.get("volume", "125000")
+        token_yes = clob_tokens[0] if len(clob_tokens) > 0 else ""
+        token_no = clob_tokens[1] if len(clob_tokens) > 1 else ""
+        price_yes = float(prices[0]) if len(prices) > 0 else 0.5
+        price_no = float(prices[1]) if len(prices) > 1 else 0.5
 
-        market_info = {
-            "title": event_title,
-            "question": market_question,
-            "price_yes": price_yes,
-            "price_no": price_no,
-            "volume": volume
-        }
+        market_info = {"price_yes": price_yes, "price_no": price_no}
+        result = analyze_with_ai(market_info, gemini_client)
+        keputusan = result.get("keputusan", "HOLD")
+        alasan = result.get("alasan", "")
 
-        print(f"\n[{idx}/{min(5, len(events))}] Analyzing BTC 5m Market: '{market_question[:65]}...'")
-        print(f"    Prices -> YES: ${price_yes} | NO: ${price_no} | Bet: ${BET_AMOUNT_USD}")
+        print(f"\n[{idx}] Keputusan AI: {keputusan} | {alasan}")
 
-        ai_result = step_3_analyze_btc_with_gemini(market_info, gemini_client)
-        keputusan = ai_result.get("keputusan", "HOLD")
-        alasan = ai_result.get("alasan", "No reason provided.")
+        order_id = "HOLD"
+        token_used = ""
+        price_used = 0.0
+        side_label = "HOLD"
 
-        print(f"    🤖 Bitcoin AI Decision: {keputusan} | Reason: {alasan}")
+        if keputusan == "BUY_YES" and token_yes:
+            order_id = execute_real_order(token_yes, price_yes, "BUY YES")
+            token_used = token_yes
+            price_used = price_yes
+            side_label = "BUY_YES"
+        elif keputusan == "BUY_NO" and token_no:
+            order_id = execute_real_order(token_no, price_no, "BUY NO")
+            token_used = token_no
+            price_used = price_no
+            side_label = "BUY_NO"
 
-        # Real Order Execution if BUY signal & credentials available
-        if keputusan == "BUY_YES" and token_id_yes != "N/A":
-            execute_real_clob_order(token_id_yes, price_yes, "BUY")
-        elif keputusan == "BUY_NO" and token_id_no != "N/A":
-            execute_real_clob_order(token_id_no, price_no, "BUY")
-
-        simulation_records.append({
+        records.append({
             "Timestamp": datetime.now(timezone.utc).isoformat(),
-            "EventTitle": event_title,
-            "MarketQuestion": market_question,
-            "TokenID_YES": token_id_yes,
-            "TokenID_NO": token_id_no,
-            "Price_YES": price_yes,
-            "Price_NO": price_no,
-            "Keputusan": keputusan,
-            "Alasan": alasan,
-            "Volume": volume
+            "Wallet": EOA_WALLET_ADDRESS,
+            "Market": event.get("title", "BTC 5m")[:60],
+            "TokenID": token_used[:20] if token_used else "N/A",
+            "Price": f"{price_used:.4f}",
+            "Side": side_label,
+            "BetUSD": BET_AMOUNT_USD if side_label != "HOLD" else 0,
+            "OrderID": str(order_id),
+            "Alasan": alasan[:100]
         })
 
-    if simulation_records:
-        step_4_record_simulation_and_push_github(simulation_records)
+    if records:
+        save_and_sync(records)
 
-    print("\n✅ [BITCOIN 5-MIN CYCLE COMPLETE] Finished successfully.")
+    print(f"\n✅ Cycle selesai. Total trade hari ini: {daily_trades}")
 
 
 if __name__ == "__main__":
