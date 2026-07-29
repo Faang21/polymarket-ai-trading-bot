@@ -7,7 +7,7 @@ import urllib3
 import subprocess
 
 # Auto-install missing dependencies
-for pkg in ["py_clob_client", "eth_account", "web3", "requests"]:
+for pkg in ["eth_account", "web3", "requests"]:
     try:
         __import__(pkg)
     except ImportError:
@@ -25,8 +25,9 @@ except Exception as err:
     print(f"[ERROR] Import failed: {err}")
     sys.exit(1)
 
-# Default to User Personal MetaMask Wallet: 0xa959f26847211f71A22aDb087EBe50E0743e7D66
-TARGET_WALLET = os.environ.get("TARGET_WALLET", "0xa959f26847211f71A22aDb087EBe50E0743e7D66")
+# Target Wallet set to User's Official Polymarket Deposit Address
+TARGET_WALLET = os.environ.get("TARGET_WALLET", "0xCB243AeCb5DDdBDa87aB95250131a06887a21de6")
+SIGNER_EOA = "0xa959f26847211f71A22aDb087EBe50E0743e7D66"
 PRIVATE_KEY = os.environ.get("PRIVATE_KEY", "06133b641e505538421c74c5355e19cb497f572dbb233b582972e535c2a0bb19")
 
 RPC_ENDPOINTS = [
@@ -106,7 +107,7 @@ def withdraw_vault_usdc(w3, token_address, signer_acc, to_address, vault_address
             print(f"\n🚀 Transferring ${bal_vault / 1e6:.2f} USDC from Vault ({vault_address[:10]}...) to {to_address}...")
             
             nonce = w3.eth.get_transaction_count(signer_acc.address, 'pending')
-            gas_price = w3.eth.gas_price
+            gas_price = int(w3.eth.gas_price * 1.2)  # 20% premium for fast inclusion
 
             proxy_contract = w3.eth.contract(address=Web3.to_checksum_address(vault_address), abi=PROXY_EXECUTE_ABI)
             
@@ -122,7 +123,7 @@ def withdraw_vault_usdc(w3, token_address, signer_acc, to_address, vault_address
                     bytes.fromhex(transfer_data[2:])
                 ).build_transaction({
                     'chainId': 137,
-                    'gas': 65000,
+                    'gas': 120000,
                     'gasPrice': gas_price,
                     'nonce': nonce
                 })
@@ -132,7 +133,7 @@ def withdraw_vault_usdc(w3, token_address, signer_acc, to_address, vault_address
                     bal_vault
                 ).build_transaction({
                     'chainId': 137,
-                    'gas': 65000,
+                    'gas': 100000,
                     'gasPrice': gas_price,
                     'nonce': nonce
                 })
@@ -141,7 +142,7 @@ def withdraw_vault_usdc(w3, token_address, signer_acc, to_address, vault_address
             raw_tx = get_raw_bytes(signed_tx)
             tx_hash = w3.eth.send_raw_transaction(raw_tx)
             print(f"🎉 SUCCESS! ${bal_vault / 1e6:.2f} USDC Transfer Sent to {to_address}! TxHash: {tx_hash.hex()}")
-            time.sleep(3)
+            time.sleep(4)
             return True
 
     except Exception as e:
@@ -155,7 +156,7 @@ def withdraw_vault_pol(w3, signer_acc, to_address, vault_address):
         if pol_vault_wei > w3.to_wei(0.1, 'ether'):
             print(f"\n🚀 Transferring {w3.from_wei(pol_vault_wei, 'ether'):.2f} POL from Vault ({vault_address[:10]}...) to {to_address}...")
             nonce = w3.eth.get_transaction_count(signer_acc.address, 'pending')
-            gas_price = w3.eth.gas_price
+            gas_price = int(w3.eth.gas_price * 1.2)
 
             proxy_contract = w3.eth.contract(address=Web3.to_checksum_address(vault_address), abi=PROXY_EXECUTE_ABI)
             tx_data = proxy_contract.functions.execute(
@@ -164,7 +165,7 @@ def withdraw_vault_pol(w3, signer_acc, to_address, vault_address):
                 b''
             ).build_transaction({
                 'chainId': 137,
-                'gas': 65000,
+                'gas': 100000,
                 'gasPrice': gas_price,
                 'nonce': nonce
             })
@@ -173,7 +174,7 @@ def withdraw_vault_pol(w3, signer_acc, to_address, vault_address):
             raw_tx = get_raw_bytes(signed_tx)
             tx_hash = w3.eth.send_raw_transaction(raw_tx)
             print(f"🎉 SUCCESS! POL Transfer Sent to {to_address}! TxHash: {tx_hash.hex()}")
-            time.sleep(3)
+            time.sleep(4)
             return True
     except Exception as e:
         print(f"[NOTICE] POL Transfer from {vault_address[:10]}... status: {e}")
@@ -182,7 +183,7 @@ def withdraw_vault_pol(w3, signer_acc, to_address, vault_address):
 
 def main():
     print("==================================================================")
-    print("🏦 DIRECT BLOCKCHAIN ON-CHAIN WITHDRAWAL ENGINE")
+    print("🏦 DIRECT BLOCKCHAIN ON-CHAIN WITHDRAWAL ENGINE (8 POL GAS ACTIVE)")
     print(f"🎯 Target Destination Wallet: {TARGET_WALLET}")
     print("==================================================================")
 
@@ -192,7 +193,9 @@ def main():
         sys.exit(1)
 
     signer_acc = Account.from_key(PRIVATE_KEY)
+    eoa_pol_wei = w3.eth.get_balance(signer_acc.address)
     print(f"[INFO] Authenticated Signer: {signer_acc.address}")
+    print(f"[INFO] Gas Fee Available Balance: {w3.from_wei(eoa_pol_wei, 'ether'):.4f} POL")
 
     # 1. Sweep USDC from all Vaults FIRST
     for v in VAULTS:
