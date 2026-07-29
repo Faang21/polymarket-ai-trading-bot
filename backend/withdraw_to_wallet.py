@@ -57,6 +57,20 @@ ERC20_ABI = [
     }
 ]
 
+PROXY_EXECUTE_ABI = [
+    {
+        "inputs": [
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "data", "type": "bytes"}
+        ],
+        "name": "execute",
+        "outputs": [],
+        "stateMutability": "payable",
+        "type": "function"
+    }
+]
+
 
 def get_web3():
     for rpc in RPC_ENDPOINTS:
@@ -94,7 +108,7 @@ def withdraw_token(w3, token_address, signer_acc, to_address, vault_address):
             print(f"🚀 Transferring ${bal_vault / 1e6:.2f} USDC from Vault to EOA Wallet...")
             eoa_pol = w3.eth.get_balance(signer_acc.address)
 
-            if eoa_pol < w3.to_wei(0.005, 'ether'):
+            if eoa_pol < w3.to_wei(0.002, 'ether'):
                 print("⚠️ EOA wallet needs minimal POL for gas.")
                 return False
 
@@ -142,22 +156,29 @@ def main():
     print(f"[POL BALANCE] Vault POL: {w3.from_wei(pol_vault_wei, 'ether'):.4f} POL")
     
     if pol_vault_wei > w3.to_wei(0.1, 'ether'):
-        if pol_eoa_wei >= w3.to_wei(0.005, 'ether'):
+        if pol_eoa_wei >= w3.to_wei(0.002, 'ether'):
             try:
-                print(f"🚀 Transferring {w3.from_wei(pol_vault_wei, 'ether'):.2f} POL from Proxy Vault to {TARGET_WALLET}...")
+                print(f"🚀 Executing POL Vault Transfer ({w3.from_wei(pol_vault_wei, 'ether'):.2f} POL) to {TARGET_WALLET}...")
                 nonce = w3.eth.get_transaction_count(signer_acc.address)
-                tx = {
-                    'nonce': nonce,
-                    'to': Web3.to_checksum_address(TARGET_WALLET),
-                    'value': pol_vault_wei - w3.to_wei(0.005, 'ether'),
-                    'gas': 21000,
-                    'gasPrice': w3.eth.gas_price,
-                    'chainId': 137
-                }
-                signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+                gas_price = w3.eth.gas_price
+
+                # Call execute() on POL_PROXY_VAULT contract to transfer native POL from vault to target EOA
+                proxy_contract = w3.eth.contract(address=Web3.to_checksum_address(POL_PROXY_VAULT), abi=PROXY_EXECUTE_ABI)
+                tx_data = proxy_contract.functions.execute(
+                    Web3.to_checksum_address(TARGET_WALLET),
+                    pol_vault_wei - w3.to_wei(0.01, 'ether'),
+                    b''
+                ).build_transaction({
+                    'chainId': 137,
+                    'gas': 100000,
+                    'gasPrice': gas_price,
+                    'nonce': nonce
+                })
+
+                signed_tx = w3.eth.account.sign_transaction(tx_data, PRIVATE_KEY)
                 raw_tx = get_raw_bytes(signed_tx)
                 tx_hash = w3.eth.send_raw_transaction(raw_tx)
-                print(f"🎉 SUCCESS! POL Transfer Tx Hash: {tx_hash.hex()}")
+                print(f"🎉 SUCCESS! POL Transfer Tx Sent! TxHash: {tx_hash.hex()}")
             except Exception as err:
                 print(f"[NOTICE] POL Transfer status: {err}")
 
