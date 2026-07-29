@@ -216,14 +216,18 @@ def execute_real_order(token_id, price, side_label):
         token_id=str(token_id)
     )
 
-    # Derivasi L2 API Creds lengkap (key, secret, passphrase) dari Private Key
+    # Registrasi / Derivasi API Key resmi di Server Polymarket CLOB V2
     derived_creds = None
     try:
         temp_client = ClobClient(host=CLOB_HOST, key=PRIVATE_KEY, chain_id=137, signature_type=0)
-        derived_creds = temp_client.create_or_derive_api_creds()
-        print(f"   🔑 API Key resmi terderivasi: {derived_creds.api_key[:12]}...")
+        try:
+            derived_creds = temp_client.create_api_key()
+            print(f"   🔑 API Key BARU Terdaftar di Polymarket: {derived_creds.api_key[:12]}...")
+        except Exception:
+            derived_creds = temp_client.derive_api_key()
+            print(f"   🔑 API Key Terderivasi dari Server: {derived_creds.api_key[:12]}...")
     except Exception as e:
-        print(f"   ⚠️ Creds derivation info: {e}")
+        print(f"   ⚠️ API Key registration info: {e}")
 
     # Coba Signature Type: 0 (EOA Direct), 2 (Poly Proxy), 1 (Gnosis Safe)
     last_err = ""
