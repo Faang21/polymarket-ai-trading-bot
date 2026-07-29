@@ -212,8 +212,9 @@ def execute_real_order(token_id, price, side_label):
         token_id=str(token_id)
     )
 
+    # Coba Signature Type: 3 (Deposit Wallet V2), 0 (EOA Direct), 2 (Poly Proxy), 1 (Gnosis Safe)
     last_err = ""
-    for sig_type in [0, 2, 1]:
+    for sig_type in [3, 0, 2, 1]:
         try:
             client = ClobClient(
                 host=CLOB_HOST,
@@ -222,7 +223,7 @@ def execute_real_order(token_id, price, side_label):
                 signature_type=sig_type,
                 funder=POLYMARKET_DEPOSIT
             )
-            # Derivasi API Creds otomatis dari Private Key untuk Polymarket V2
+            # Derivasi API Creds resmi dari Private Key untuk Polymarket V2
             try:
                 derived_creds = client.create_or_derive_api_creds()
                 client.set_api_creds(derived_creds)
