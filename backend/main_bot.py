@@ -7,23 +7,13 @@ import ssl
 import base64
 import requests
 import urllib3
+import subprocess
 from datetime import datetime, timezone
 
 # 1. Global SSL & HTTPX Bypass for environments with clock skew
 ssl._create_default_https_context = ssl._create_unverified_context
 os.environ["PYTHONHTTPSVERIFY"] = "0"
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# Monkey-patch httpx used by google-genai to disable SSL verification
-try:
-    import httpx
-    _orig_httpx_init = httpx.Client.__init__
-    def _patched_httpx_init(self, *args, **kwargs):
-        kwargs['verify'] = False
-        _orig_httpx_init(self, *args, **kwargs)
-    httpx.Client.__init__ = _patched_httpx_init
-except Exception:
-    pass
 
 # Try importing Google GenAI SDK
 try:
@@ -36,13 +26,16 @@ except ImportError:
 # Configuration & Constants
 CLOUDFLARE_KV_URL = os.environ.get("CLOUDFLARE_KV_URL", "https://bot-control.aangcrypto21.workers.dev/status")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ." + "Ab8RN6Ieg8z8MtM1DyT6Wfg22XHQaAeRwS4avx6-nzWsLrH8cw")
+PRIVATE_KEY = os.environ.get("PRIVATE_KEY", "")
+CLOB_API_KEY = os.environ.get("CLOB_API_KEY", "")
+
 TOKEN_PART_1 = "ghp_"
 TOKEN_PART_2 = "ozkOUhN83tgGAMgxTG3wjDi6DeVeVb3ZLJwj"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", TOKEN_PART_1 + TOKEN_PART_2)
 REPO_OWNER = "Faang21"
 REPO_NAME = "polymarket-ai-trading-bot"
 
-BET_AMOUNT_USD = 1.0
+BET_AMOUNT_USD = float(os.environ.get("BET_AMOUNT_USD", "1.0"))
 CSV_FILENAME = "catatan_simulasi_polymarket.csv"
 
 
@@ -74,7 +67,6 @@ def is_strictly_5min_btc_market(event):
     slug = (event.get("slug") or "").strip().lower()
     full_text = title + " " + question + " " + slug
 
-    # Strict Exclusion list - Eliminate ALL non-5min BTC markets
     EXCLUDE_KEYWORDS = [
         "el salvador", "salvador", "150k", "100k", "200k", "hit", "september", "december", 
         "kraken", "ipo", "microstrategy", "etf", "sec", "binance", "coinbase", "election",
@@ -85,7 +77,6 @@ def is_strictly_5min_btc_market(event):
         if bad in full_text:
             return False
 
-    # Strict Inclusion: Must be 5-minute Bitcoin Up/Down window market
     if "up or down" in full_text or "btc-updown" in slug or "5-minute" in full_text or "5m" in full_text:
         return True
 
@@ -115,7 +106,6 @@ def step_2_fetch_polymarket_btc_data():
         except Exception as e:
             print(f"[WARNING] Endpoint request error: {e}")
 
-    # Fallback default market object for continuous 5-minute execution loop
     print("[INFO] Generating active 5-minute Bitcoin Up or Down prediction window object...")
     return [{
         "title": "Will Bitcoin (BTC) be Up or Down in the 5-minute window?",
@@ -135,7 +125,6 @@ def step_3_analyze_btc_with_gemini(market_info, gemini_client):
     price_no = float(market_info.get("price_no") or 0.5)
     volume = float(market_info.get("volume") or 0)
 
-    # 1. Try Gemini API first if standard AI Studio key is provided
     if gemini_client and GEMINI_API_KEY and not GEMINI_API_KEY.startswith("AQ."):
         try:
             prompt = f"""
@@ -153,10 +142,9 @@ Kembalikan format JSON:
             config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
             response = gemini_client.models.generate_content(model="gemini-2.5-flash", contents=prompt, config=config)
             return json.loads(response.text.strip())
-        except Exception as e:
+        except Exception:
             pass
 
-    # 2. Advanced Quantitative AI Signal Engine for 5-Min BTC
     if price_yes < 0.48 and price_yes > 0.05:
         return {
             "keputusan": "BUY_YES",
@@ -179,9 +167,43 @@ Kembalikan format JSON:
         }
 
 
+def execute_real_clob_order(token_id, price_str, side_str):
+    """Execute real trade on Polymarket CLOB using py_clob_client."""
+    if not PRIVATE_KEY or not CLOB_API_KEY:
+        print("💡 [MODE: PAPER TRADING SIMULATION] (Private Key & CLOB API Key missing for real order submission)")
+        return "SIMULATED_ORDER_SUCCESS"
+
+    print(f"🚀 [REAL TRADE EXECUTION] Submitting Real Order: Side={side_str} | TokenID={token_id[:10]}... | Price=${price_str} | Amount=${BET_AMOUNT_USD} USD")
+    try:
+        from py_clob_client.client import ClobClient
+        from py_clob_client.clob_types import ApiCreds, OrderArgs, Side
+
+        creds = ApiCreds(api_key=CLOB_API_KEY, api_secret="", api_passphrase="")
+        client = ClobClient(
+            host="https://clob.polymarket.com",
+            key=PRIVATE_KEY,
+            chain_id=137,
+            creds=creds,
+            signature_type=1
+        )
+
+        p = float(price_str) if float(price_str) > 0 else 0.5
+        size = round(BET_AMOUNT_USD / p, 2)
+        side = Side.BUY if side_str.upper() == "BUY" else Side.SELL
+
+        order_args = OrderArgs(price=p, size=size, side=side, token_id=token_id)
+        signed_order = client.create_order(order_args)
+        res = client.post_order(signed_order)
+        print(f"🎉 [REAL ORDER POSTED SUCCESS] Polymarket CLOB Order Response: {res}")
+        return str(res.get("orderID") or "REAL_ORDER_POSTED")
+    except Exception as err:
+        print(f"[NOTICE] Real Order submission status: {err}")
+        return f"REAL_ORDER_NOTICE_{err}"
+
+
 def step_4_record_simulation_and_push_github(records):
     """Step 4: Save transaction records to local CSV AND auto-push to GitHub repo via REST API."""
-    print(f"\n--- [STEP 4] Logging {len(records)} Bitcoin Simulation Results & Syncing to GitHub ---")
+    print(f"\n--- [STEP 4] Logging {len(records)} Bitcoin Results & Syncing to GitHub ---")
     file_exists = os.path.exists(CSV_FILENAME)
 
     fieldnames = [
@@ -226,7 +248,7 @@ def step_4_record_simulation_and_push_github(records):
         sha = res_get.json().get("sha") if res_get.status_code == 200 else None
 
         put_body = {
-            "message": f"🤖 Auto-log 5-min BTC AI trade simulation [{datetime.now(timezone.utc).strftime('%H:%M:%S')}]",
+            "message": f"🤖 Auto-log 5-min BTC AI trade [{datetime.now(timezone.utc).strftime('%H:%M:%S')}]",
             "content": content_b64,
             "branch": "main"
         }
@@ -245,7 +267,7 @@ def step_4_record_simulation_and_push_github(records):
 
 def main():
     print("==================================================================")
-    print("🚀 Polymarket BITCOIN 5-Min Execution AI Trading Bot (Gemini 3.6 Flash)")
+    print("🚀 Polymarket BITCOIN 5-Min Execution REAL & SIMULATION AI Trading Bot")
     print(f"⏰ Timestamp: {datetime.now(timezone.utc).isoformat()} | Fixed Bet: ${BET_AMOUNT_USD} USD")
     print("==================================================================")
 
@@ -313,6 +335,12 @@ def main():
         alasan = ai_result.get("alasan", "No reason provided.")
 
         print(f"    🤖 Bitcoin AI Decision: {keputusan} | Reason: {alasan}")
+
+        # Real Order Execution if BUY signal & credentials available
+        if keputusan == "BUY_YES" and token_id_yes != "N/A":
+            execute_real_clob_order(token_id_yes, price_yes, "BUY")
+        elif keputusan == "BUY_NO" and token_id_no != "N/A":
+            execute_real_clob_order(token_id_no, price_no, "BUY")
 
         simulation_records.append({
             "Timestamp": datetime.now(timezone.utc).isoformat(),
