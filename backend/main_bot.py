@@ -223,9 +223,17 @@ def execute_real_order(token_id, price, side_label):
         api_passphrase=CLOB_API_PASSPHRASE
     )
 
-    # Coba sig_type: 0 (EOA), 2 (Deposit Wallet), 1 (Gnosis)
+    # Coba berbagai kombinasi sig_type dan funder
     last_err = ""
-    for sig_type in [0, 2, 1]:
+    attempts = [
+        {"sig_type": 0, "funder": None},                  # EOA langsung tanpa funder
+        {"sig_type": 2, "funder": POLYMARKET_DEPOSIT},     # Deposit wallet
+        {"sig_type": 1, "funder": POLYMARKET_DEPOSIT},     # Gnosis safe
+        {"sig_type": 0, "funder": POLYMARKET_DEPOSIT},     # EOA + funder
+    ]
+    for attempt in attempts:
+        sig_type = attempt["sig_type"]
+        funder   = attempt["funder"]
         try:
             client = ClobClient(
                 host=CLOB_HOST,
@@ -233,21 +241,19 @@ def execute_real_order(token_id, price, side_label):
                 chain_id=137,
                 creds=api_creds,
                 signature_type=sig_type,
-                funder=POLYMARKET_DEPOSIT
+                **(({"funder": funder}) if funder else {})
             )
             signed = client.create_order(order_args)
             res    = client.post_order(signed)
             cycle_trades += 1
             daily_trades += 1
             order_id = str(res.get("orderID") or res.get("id") or "POSTED")
-            print(f"   🎉 ORDER SUKSES! ID: {order_id} (SigType={sig_type}) | Cycle: {cycle_trades}")
+            print(f"   🎉 ORDER SUKSES! ID: {order_id} (SigType={sig_type}, Funder={funder}) | Cycle: {cycle_trades}")
             return order_id
         except Exception as err:
             last_err = str(err)
-            if "maker address not allowed" in last_err or "Unauthorized" in last_err or "401" in last_err or "400" in last_err or "invalid order version" in last_err:
-                continue
-            else:
-                break
+            print(f"   ⚠️ Attempt SigType={sig_type} Funder={funder}: {last_err[:80]}")
+            continue
 
     print(f"   ⚠️ Order status: {last_err[:100]}")
     return f"ERROR: {last_err[:40]}"
